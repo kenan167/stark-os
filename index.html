@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<!--
+SETUP / SECURITY NOTES
+1. Open SETTINGS and paste your Firebase webConfig (Firebase console > Project settings > Web app). No config = LOCAL ONLY. The Firestore region (e.g. europe-west3) is chosen when the database is created in the console; this client code needs no region setting.
+2. VAULT ID = SHA-256( PBKDF2-SHA256(PIN, salt, 200k iterations) + salt ), 64 hex chars. DEFAULT SALT is c7542a0dc13bb51c80e897b4d2e2dc48 (hard-coded as requested).
+  A salt that is visible in this file is public: anyone holding this file can enumerate all 10,000 PINs against vault ids. Only the Firestore rules below protect you then.
+  To get a secret salt, use "LINK EXISTING VAULT" on the lock screen with your own random 32-hex value.
+3. Firestore data is unencrypted. Suggested rules (blocks listing vaults): match /vaults/{id} { allow get, create, update: if true; allow list, delete: if false; }
+4. Sync is offline-first, last-write-wins on one document per vault; a pending flag is flushed when the connection returns.
+5. Gemini key + Firebase config live only in this browser's localStorage and are NOT included in backups. Scanned images/text go to Google. LaTeX is rendered offline as Unicode math (raw LaTeX is kept). Bump CACHE in sw.js after updates.
+6. Error-log photos and daily restore points are kept in this browser's IndexedDB only (never synced). Alerts fire while the app is open or in the background; use EXPORT TO CALENDAR for alarms that must ring when it is closed.
+-->
+<html lang="en" data-mode="hud">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://www.gstatic.com https://*.gstatic.com https://generativelanguage.googleapis.com https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<title>J.A.R.V.I.S. // BATCAVE OS</title>
+<script>try{var d=document.documentElement,l=localStorage.getItem('jv.look');d.dataset.mode=localStorage.getItem('jv.mode')==='minimal'?'minimal':'hud';d.dataset.look=(l==='light'||l==='dark')?l:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')}catch(e){}</script>
+<style>
+   /* --- 1. NEON PARLAMA & SCANLINE --- */
+.stark-card, .btn-stark, button, input, textarea {
+  box-shadow: 0 0 8px rgba(var(--pc-rgb),0.2);
+  transition: all 0.3s ease !important;
+}
+
+.stark-card:hover, .btn-stark:hover, button:hover {
+  box-shadow: 0 0 18px rgba(var(--pc-rgb),0.6) !important;
+  transform: translateY(-1px);
+}
+
+/* CRT Tarama Çizgisi */
+body::before {
+  content: " ";
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+  background-size: 100% 4px;
+  z-index: 9998;
+  pointer-events: none;
+  opacity: 0.15;
+}
+
+/* --- 2. BOOT EKRANI CSS --- */
+#boot-screen {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background-color: #050b14;
+  color: var(--primary-color);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 99999;
+  font-family: monospace;
+  transition: opacity 0.8s ease, visibility 0.8s ease;
+}
+
+#boot-screen.fade-out {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.boot-loader {
+  width: 180px;
+  height: 3px;
+  background: rgba(var(--pc-rgb),0.2);
+  margin-top: 15px;
+  position: relative;
+  overflow: hidden;
+}
+
+.boot-loader::after {
+  content: '';
+  position: absolute;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: var(--primary-color);
+  animation: loading 1.2s infinite ease-in-out;
+}
+
+@keyframes loading {
+  0% { left: -50%; }
+  100% { left: 100%; }
+}
+:root{--bg:#000;--primary-color:#00f3ff;--pc-rgb:0,243,255;--cy:var(--primary-color);--am:#ffb700;--sl:#1e232a;--tx:#d8f8ff;--mu:#6f8791;--rd:#ff4d5e;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--mono);font-size:14px}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;-webkit-user-select:none;user-select:none}
+input,textarea{width:100%;background:#05090b;border:1px solid var(--sl);border-radius:4px;padding:11px;outline:none;font-size:16px}
+input:focus,textarea:focus{border-color:var(--cy);box-shadow:0 0 8px rgba(var(--pc-rgb),.35)}
+#app{max-width:980px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-left) + 14px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-right) + 14px)}
+.hud{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid var(--sl);padding-bottom:10px;flex-wrap:wrap}
+.hud h1{font-size:15px;letter-spacing:.2em;color:var(--cy);text-shadow:0 0 10px rgba(var(--pc-rgb),.7)}
+.sub{font-size:10px;letter-spacing:.18em;color:var(--mu);text-transform:uppercase}
+.badge{border:1px solid var(--am);color:var(--am);padding:3px 8px;font-size:10px;letter-spacing:.15em;box-shadow:0 0 8px rgba(255,183,0,.35);animation:pl 2.4s infinite}
+@keyframes pl{50%{box-shadow:0 0 14px rgba(255,183,0,.7)}}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:14px}
+.card{background:linear-gradient(160deg,#07100f,#000);border:1px solid var(--sl);padding:14px;text-align:left;min-height:96px;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));transition:border-color .2s,transform .12s,box-shadow .2s}
+.card:hover{border-color:var(--cy);box-shadow:0 0 14px rgba(var(--pc-rgb),.2)}.card:active{transform:scale(.97)}
+.card b{display:block;font-size:20px;color:var(--cy);margin-top:6px;text-shadow:0 0 8px rgba(var(--pc-rgb),.5);font-weight:500}
+.card.am b{color:var(--am);text-shadow:0 0 8px rgba(255,183,0,.5)}
+.drop{margin-top:14px;border:1px dashed var(--cy);padding:18px;text-align:center;color:var(--cy);display:block;cursor:pointer;background:rgba(var(--pc-rgb),.03);letter-spacing:.12em}
+.drop.over{background:rgba(var(--pc-rgb),.12)}.drop.err{color:var(--rd);border-color:var(--rd);background:rgba(255,77,94,.06)}.drop.busy{color:var(--am);border-color:var(--am);animation:pl 1s infinite;pointer-events:none}
+.btn{min-height:44px;padding:0 14px;border:1px solid var(--cy);color:var(--cy);letter-spacing:.1em;font-size:12px;transition:background .2s,transform .1s}
+.btn:active{transform:scale(.96);background:rgba(var(--pc-rgb),.15)}.btn.am{border-color:var(--am);color:var(--am)}.btn.rd{border-color:var(--rd);color:var(--rd)}
+.row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}.row>*{flex:1}.row>.btn{flex:none}
+.li{border-bottom:1px solid var(--sl);padding:10px 0;display:flex;justify-content:space-between;gap:8px;align-items:center;min-height:44px}
+.mu{color:var(--mu)}.big{font-size:44px;color:var(--cy);text-align:center;margin:10px 0;text-shadow:0 0 14px rgba(var(--pc-rgb),.6)}
+#modal,#lock{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;z-index:50;align-items:flex-end;justify-content:center}
+#modal.on,#lock.on{display:flex}#lock{align-items:center;z-index:99;flex-direction:column;gap:18px;background:#000}
+.sheet{width:min(100%,640px);max-height:90vh;max-height:90dvh;overflow:auto;background:#030607;border:1px solid var(--cy);box-shadow:0 0 24px rgba(var(--pc-rgb),.25);padding:16px calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 20px) 16px}
+.sh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:var(--cy);letter-spacing:.14em}
+.keys{display:grid;grid-template-columns:repeat(3,76px);gap:10px}.keys .btn{height:60px;font-size:20px}
+.dots{display:flex;gap:14px}.dots i{width:14px;height:14px;border:1px solid var(--cy);border-radius:50%}.dots i.f{background:var(--cy);box-shadow:0 0 10px var(--cy)}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 18px);transform:translateX(-50%);background:#000;border:1px solid var(--am);color:var(--am);padding:9px 14px;font-size:12px;letter-spacing:.1em;z-index:120;display:none;max-width:92%}
+.msg{padding:9px;margin-top:8px;border-left:2px solid var(--cy);white-space:pre-wrap;background:#04090a}.msg.u{border-color:var(--am);text-align:right}
+pre{white-space:pre-wrap;font-family:var(--mono)}
+.tex{font-size:15px;line-height:1.7;word-break:break-word}.raw{font-size:11px;color:var(--mu);margin-top:6px;white-space:pre-wrap;word-break:break-all}
+/* ===== HUD FRAMING / GLASS ===== */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(900px 500px at 50% -8%,rgba(var(--pc-rgb),.12),transparent 65%),
+    linear-gradient(rgba(var(--pc-rgb),.04) 1px,transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg,rgba(var(--pc-rgb),.04) 1px,transparent 1px) 0 0/44px 44px}
+#app{position:relative;z-index:1}
+.card{position:relative;
+  background:linear-gradient(160deg,rgba(var(--pc-rgb),.08),rgba(0,0,0,.55) 60%);
+  -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
+  border-color:rgba(var(--pc-rgb),.28);box-shadow:inset 0 0 18px rgba(var(--pc-rgb),.06)}
+.card::before,.card::after{content:"";position:absolute;width:12px;height:12px;pointer-events:none;opacity:.85;transition:width .2s,height .2s}
+.card::before{top:5px;left:5px;border-top:1px solid var(--primary-color);border-left:1px solid var(--primary-color)}
+.card::after{bottom:5px;right:5px;border-bottom:1px solid var(--primary-color);border-right:1px solid var(--primary-color)}
+.card:hover{border-color:var(--primary-color)}
+.card:hover::before,.card:hover::after{width:18px;height:18px}
+.card.am b{text-shadow:0 0 8px color-mix(in srgb,var(--am) 50%,transparent)}
+.badge{box-shadow:0 0 8px color-mix(in srgb,var(--am) 35%,transparent)}
+.sheet{background:rgba(3,8,10,.82);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border-color:rgba(var(--pc-rgb),.5);border-top:2px solid var(--primary-color);
+  box-shadow:0 0 28px rgba(var(--pc-rgb),.22),inset 0 0 24px rgba(var(--pc-rgb),.05)}
+.hf{position:fixed;width:34px;height:34px;color:var(--primary-color);opacity:.6;pointer-events:none;z-index:5;filter:drop-shadow(0 0 4px rgba(var(--pc-rgb),.8))}
+.hf.tl{top:calc(env(safe-area-inset-top) + 6px);left:calc(env(safe-area-inset-left) + 6px)}
+.hf.tr{top:calc(env(safe-area-inset-top) + 6px);right:calc(env(safe-area-inset-right) + 6px);transform:scaleX(-1)}
+.hf.bl{bottom:calc(env(safe-area-inset-bottom) + 6px);left:calc(env(safe-area-inset-left) + 6px);transform:scaleY(-1)}
+.hf.br{bottom:calc(env(safe-area-inset-bottom) + 6px);right:calc(env(safe-area-inset-right) + 6px);transform:scale(-1,-1)}
+#telem{margin-top:6px}
+[data-theme="mark"] .card::before,[data-theme="mark"] .card::after{border-color:var(--am)}
+[data-theme="mark"] .card{border-color:rgba(255,197,61,.30)}
+[data-theme="strike"] .hud{border-bottom-width:3px;border-image:repeating-linear-gradient(135deg,var(--primary-color) 0 6px,transparent 6px 12px) 1}
+[data-theme="strike"] body::after{opacity:.8}
+/* ===== WARNING / CRITICAL FX ===== */
+#sy{display:inline-block}
+.fx-warn{color:var(--am)!important;animation:fxWarn 1.1s ease-in-out infinite}
+.fx-crit{color:var(--rd)!important;animation:fxCrit 1.6s ease-in-out infinite,fxGlitch 3.2s steps(1) infinite}
+.fx-glitch{animation:fxGlitch .5s steps(1) 1}
+@keyframes fxWarn{50%{opacity:.45;text-shadow:0 0 10px var(--am)}}
+@keyframes fxCrit{50%{opacity:.7;text-shadow:0 0 12px var(--rd)}}
+@keyframes fxGlitch{
+  0%,90%,100%{transform:none;clip-path:none}
+  92%{transform:translate(-2px,1px);text-shadow:2px 0 var(--primary-color),-2px 0 var(--rd)}
+  94%{transform:translate(2px,-1px);clip-path:inset(30% 0 40% 0)}
+  96%{transform:translate(-1px,0);clip-path:inset(60% 0 10% 0);text-shadow:-2px 0 var(--primary-color),2px 0 var(--rd)}}
+.typing::after{content:"▍";color:var(--primary-color);animation:fxWarn .8s steps(1) infinite;margin-left:1px}
+.syslog-line{font-size:12px;letter-spacing:.06em;padding:2px 0}
+/* ===== HUD extras: reactor logo, header sweep, card boot-in ===== */
+.reactor{width:24px;height:24px;vertical-align:-6px;margin-right:10px;color:var(--primary-color);filter:drop-shadow(0 0 5px rgba(var(--pc-rgb),.9))}
+.reactor .rg{transform-origin:12px 12px;animation:rspin 14s linear infinite}
+.lock-reactor{width:84px;height:84px;margin:0 0 6px;vertical-align:baseline;animation:rpulse 2.6s ease-in-out infinite}
+@keyframes rspin{to{transform:rotate(360deg)}}
+@keyframes rpulse{50%{filter:drop-shadow(0 0 16px rgba(var(--pc-rgb),1));opacity:.8}}
+.hud{position:relative}
+.hud::after{content:"";position:absolute;left:-30%;bottom:-1px;height:1px;width:30%;background:linear-gradient(90deg,transparent,var(--primary-color),transparent);animation:hsweep 5s linear infinite}
+@keyframes hsweep{to{left:100%}}
+/* ===== HUD v3 polish ===== */
+html[data-mode="hud"] body::after{animation:gridDrift 40s linear infinite}
+@keyframes gridDrift{to{background-position:0 0,44px 44px,44px 44px}}
+html[data-mode="hud"] #app::before{content:"";position:fixed;left:0;right:0;top:-12%;height:12%;z-index:0;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(var(--pc-rgb),.07),transparent);animation:beam 9s linear infinite}
+@keyframes beam{to{top:112%}}
+html[data-mode="hud"] .card{overflow:hidden}
+html[data-mode="hud"] .card .hs-sweep{display:none}
+html[data-mode="hud"] .card:active{transform:scale(.985);box-shadow:inset 0 0 26px rgba(var(--pc-rgb),.22),0 0 14px rgba(var(--pc-rgb),.35)}
+html[data-mode="hud"] .card:hover{background-image:linear-gradient(160deg,rgba(var(--pc-rgb),.14),rgba(0,0,0,.5) 60%)}
+html[data-mode="hud"] .card b{font-variant-numeric:tabular-nums;text-shadow:0 0 10px rgba(var(--pc-rgb),.45)}
+html[data-mode="hud"] .card.scanin{animation:scanin .9s ease-out 1}
+@keyframes scanin{0%{box-shadow:inset 0 -60px 40px -40px rgba(var(--pc-rgb),.55)}100%{box-shadow:inset 0 40px 40px -40px rgba(var(--pc-rgb),0)}}
+html[data-mode="hud"] .hud h1{letter-spacing:.14em;text-shadow:0 0 12px rgba(var(--pc-rgb),.55)}
+html[data-mode="hud"] .hud h1 #ttl::after{content:"";display:inline-block;width:7px;height:7px;margin-left:10px;border-radius:50%;background:var(--primary-color);box-shadow:0 0 8px var(--primary-color);animation:fxWarn 2s ease-in-out infinite;vertical-align:2px}
+html[data-mode="hud"] .lock-reactor{filter:drop-shadow(0 0 14px rgba(var(--pc-rgb),.8))}
+html[data-mode="hud"] #keys .btn:active{background:rgba(var(--pc-rgb),.22);box-shadow:0 0 12px rgba(var(--pc-rgb),.6)}
+html[data-mode="hud"] .toast,html[data-mode="hud"] #toast{border-color:var(--primary-color);box-shadow:0 0 18px rgba(var(--pc-rgb),.35),inset 0 0 12px rgba(var(--pc-rgb),.08)}
+@media(prefers-reduced-motion:reduce){html[data-mode="hud"] body::after,html[data-mode="hud"] #app::before,.card.scanin{animation:none!important}}
+@keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.grid.boot .card{animation:cardIn .5s cubic-bezier(.2,.8,.2,1) both}
+/* ===== MINIMAL MODE (warm, calm, Claude-inspired) ===== */
+html[data-mode="minimal"]{--bg:#262624;--card:#30302e;--card2:#2b2b29;--input:#1f1e1d;--line:#3d3d3a;--line2:#55544f;--sl:var(--line);
+  --primary-color:#d97757;--pc-rgb:217,119,87;--am:#d97757;--tx:#faf9f5;--mu:#a3a097;--rd:#e5776b;--on:#1f1e1d;
+  --mono:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",system-ui,sans-serif;
+  --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Georgia,serif;color-scheme:dark}
+html[data-mode="minimal"][data-look="light"]{--bg:#faf9f5;--card:#ffffff;--card2:#f3f1e8;--input:#ffffff;--line:#e8e6dc;--line2:#d3d0c0;
+  --primary-color:#b04e2e;--pc-rgb:176,78,46;--am:#b04e2e;--tx:#141413;--mu:#6b6a63;--rd:#b53a2e;--on:#ffffff;color-scheme:light}
+html[data-mode="minimal"],html[data-mode="minimal"] body{font-size:15px}
+html[data-mode="minimal"] #boot-screen,html[data-mode="minimal"] .hf,html[data-mode="minimal"] .reactor,html[data-mode="minimal"] #telem,html[data-mode="minimal"] .badge,html[data-mode="minimal"] .hud::after,html[data-mode="minimal"] body::before,html[data-mode="minimal"] body::after,html[data-mode="minimal"] .card::before,html[data-mode="minimal"] .card::after{display:none!important}
+html[data-mode="minimal"] .hud{border-bottom:1px solid var(--line);border-image:none;padding-bottom:14px}
+html[data-mode="minimal"] .hud h1{font-family:var(--serif);font-size:22px;font-weight:500;letter-spacing:-.01em;color:var(--tx);text-shadow:none}
+html[data-mode="minimal"] .sub{text-transform:none;letter-spacing:0;font-size:12px}
+html[data-mode="minimal"] #hsub,html[data-mode="minimal"] #lt{text-transform:lowercase;letter-spacing:0}
+html[data-mode="minimal"] #hsub::first-letter,html[data-mode="minimal"] #lt::first-letter{text-transform:uppercase}
+html[data-mode="minimal"] .card{background:var(--card);border:1px solid var(--line);border-radius:16px;clip-path:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+html[data-mode="minimal"] .card:hover{border-color:var(--line2);box-shadow:none}
+html[data-mode="minimal"] .card b,html[data-mode="minimal"] .card.am b{color:var(--tx);font-family:var(--serif);font-size:23px;font-weight:500;text-shadow:none}
+html[data-mode="minimal"] .big{color:var(--tx);font-family:var(--serif);font-weight:400;text-shadow:none}
+html[data-mode="minimal"] button,html[data-mode="minimal"] input,html[data-mode="minimal"] textarea{box-shadow:none}
+html[data-mode="minimal"] button:hover{box-shadow:none!important;transform:none}
+html[data-mode="minimal"] .card:active,html[data-mode="minimal"] .btn:active{transform:scale(.98)}
+html[data-mode="minimal"] .btn{border:1px solid var(--line2);color:var(--tx);border-radius:10px;letter-spacing:0;font-size:13px;font-weight:500}
+html[data-mode="minimal"] .btn:active{background:var(--card2)}
+html[data-mode="minimal"] .btn.am{background:var(--primary-color);border-color:var(--primary-color);color:var(--on)}
+html[data-mode="minimal"] .btn.am:active{background:var(--primary-color);filter:brightness(.92)}
+html[data-mode="minimal"] .btn.rd{color:var(--rd);border-color:color-mix(in srgb,var(--rd) 45%,transparent)}
+html[data-mode="minimal"] #hs.btn.am{background:transparent;color:var(--tx);border-color:var(--line2)}
+html[data-mode="minimal"] input,html[data-mode="minimal"] textarea{background:var(--input);border:1px solid var(--line);border-radius:10px}
+html[data-mode="minimal"] input:focus,html[data-mode="minimal"] textarea:focus{border-color:var(--primary-color);box-shadow:0 0 0 3px rgba(var(--pc-rgb),.2)}
+html[data-mode="minimal"] .drop{border:1px dashed var(--line2);color:var(--mu);background:transparent;border-radius:14px;letter-spacing:0}
+html[data-mode="minimal"] .drop:hover{background:var(--card2);box-shadow:none}
+html[data-mode="minimal"] .sh{color:var(--tx);letter-spacing:0;font-family:var(--serif);font-size:18px}
+html[data-mode="minimal"] #modal{background:rgba(0,0,0,.45)}
+html[data-mode="minimal"] #lock{background:var(--bg)}
+html[data-mode="minimal"] .sheet{background:var(--card);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:0 -10px 40px rgba(0,0,0,.30)}
+html[data-mode="minimal"] .msg{background:var(--card2);border-left:2px solid var(--primary-color);border-radius:10px}
+html[data-mode="minimal"] .msg.u{background:rgba(var(--pc-rgb),.12)}
+html[data-mode="minimal"] .li{border-bottom-color:var(--line)}
+html[data-mode="minimal"] .dots i{border-color:var(--mu)}
+html[data-mode="minimal"] .dots i.f{background:var(--primary-color);border-color:var(--primary-color);box-shadow:none}
+html[data-mode="minimal"] .keys .btn{border-radius:14px;font-size:20px}
+html[data-mode="minimal"] #toast{background:var(--card);border:1px solid var(--line2);color:var(--tx);border-radius:12px;letter-spacing:0;box-shadow:0 8px 28px rgba(0,0,0,.3)}
+html[data-mode="minimal"] .fx-warn,html[data-mode="minimal"] .fx-crit,html[data-mode="minimal"] .fx-glitch{animation:none}
+html[data-mode="minimal"] .grid.boot .card{animation:none}
+html[data-mode="minimal"] [data-theme] .hud{border-bottom-width:1px}
+/* ===== v4: dashboard sections, hero gauge, progress, module lists ===== */
+.grid{grid-template-columns:repeat(auto-fill,minmax(136px,1fr))}
+@media(min-width:720px){.grid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}}
+@media(min-width:300px){.card.w2{grid-column:span 2}}
+.grid.boot .card{animation-delay:calc(var(--i,0)*32ms)}
+.card{min-width:0;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start}
+.card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px}
+.card>.cp{margin-top:auto}
+.card>.cs{margin-top:-2px}
+.card>.row{margin-bottom:10px}
+.sec{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:10px;letter-spacing:.26em;color:var(--mu);margin-top:10px;text-transform:uppercase}
+.sec::before{content:"//";color:var(--primary-color);letter-spacing:0}
+.sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(var(--pc-rgb),.55),transparent)}
+.cp{height:3px;background:rgba(var(--pc-rgb),.14);margin-top:9px;overflow:hidden}
+.cp i{display:block;height:100%;background:var(--primary-color);box-shadow:0 0 8px rgba(var(--pc-rgb),.8);transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.card.am .cp i,.cp.full i{background:var(--am);box-shadow:0 0 8px var(--am)}
+.tk{display:flex;gap:10px;align-items:center;text-align:left;min-height:38px;margin-top:4px;min-width:0;box-shadow:none!important}
+.tk:hover{transform:none!important}
+.tk .hab-box{width:22px;height:22px}
+.tk-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--tx)}
+.cs{font-size:11px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mu)}
+.cs.crit{color:var(--rd)}.cs.warn{color:var(--am)}
+/* hero */
+#hero{display:none}
+#hero.on{display:grid;grid-template-columns:1fr auto;gap:10px 12px;align-items:center;margin-top:12px;padding:12px 14px;position:relative;
+  border:1px solid rgba(var(--pc-rgb),.3);background:linear-gradient(120deg,rgba(var(--pc-rgb),.11),rgba(0,0,0,.45) 70%);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+#hero.on::before,#hero.on::after{content:"";position:absolute;width:16px;height:16px;pointer-events:none}
+#hero.on::before{top:-1px;left:-1px;border-top:2px solid var(--primary-color);border-left:2px solid var(--primary-color)}
+#hero.on::after{bottom:-1px;right:-1px;border-bottom:2px solid var(--primary-color);border-right:2px solid var(--primary-color)}
+.hero-main{display:flex;gap:14px;align-items:center;min-width:0;text-align:left;box-shadow:none!important}
+.gauge{width:78px;height:78px;flex:none;color:var(--primary-color);overflow:visible}
+.g-out{fill:none;stroke:currentColor;stroke-width:.8;stroke-dasharray:2 3;opacity:.65;transform-origin:32px 32px;animation:rspin 30s linear infinite}
+.g-tick{fill:none;stroke:currentColor;stroke-width:3;stroke-dasharray:1 12.6;opacity:.5}
+.g-trk{fill:none;stroke:rgba(var(--pc-rgb),.16);stroke-width:5}
+.g-val{fill:none;stroke:currentColor;stroke-width:5;filter:drop-shadow(0 0 4px rgba(var(--pc-rgb),.9));transition:stroke-dasharray .8s cubic-bezier(.2,.8,.2,1)}
+.g-tx{fill:currentColor;font-size:17px;font-family:var(--mono)}
+.g-pc{fill:currentColor;font-size:6px;opacity:.7;font-family:var(--mono);letter-spacing:.1em}
+.hero-t{min-width:0;flex:1;display:block}
+.hero-t>.sub{display:block;line-height:1.5}
+.hero-t b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-weight:500;font-size:16px;line-height:1.25;color:var(--primary-color);margin:4px 0;overflow:hidden;text-shadow:0 0 10px rgba(var(--pc-rgb),.5)}
+.chips{grid-column:1/-1;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:0 -14px;padding:2px 14px}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;white-space:nowrap;font-size:10px;letter-spacing:.12em;border:1px solid rgba(var(--pc-rgb),.4);color:var(--primary-color);padding:0 9px;min-height:30px}
+.chip.warn{border-color:var(--am);color:var(--am)}.chip.crit{border-color:var(--rd);color:var(--rd)}
+.mic{width:48px;height:48px;border:1px solid var(--primary-color);border-radius:50%;color:var(--primary-color);display:grid;place-items:center}
+.mic.rec,.btn.rec{border-color:var(--rd)!important;color:var(--rd)!important;animation:pl 1s infinite}
+/* lists inside sheets */
+.sheet textarea{margin-top:8px}
+.note{font-size:12px;color:var(--mu);margin-top:8px;line-height:1.5}
+.hab{display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--sl);padding:8px 0}
+.hab-main:hover,.ev:hover,.hero-main:hover{box-shadow:none!important;transform:none!important}
+.hab-main{display:flex;gap:10px;align-items:center;flex:1;min-width:0;text-align:left;min-height:48px;box-shadow:none!important}
+.hab-box{width:32px;height:32px;border:1px solid var(--primary-color);display:grid;place-items:center;color:var(--primary-color);flex:none;font-size:14px}
+.hab.ok .hab-box{background:rgba(var(--pc-rgb),.22);box-shadow:0 0 10px rgba(var(--pc-rgb),.5)}
+.hab-nm{display:flex;flex-direction:column;gap:4px;min-width:0}
+.hab-sub{font-size:10px;letter-spacing:.1em}
+.dots7{display:flex;gap:4px}
+.dots7 i{width:8px;height:8px;border:1px solid rgba(var(--pc-rgb),.5)}
+.dots7 i.f{background:var(--primary-color)}
+.ev{display:flex;gap:12px;align-items:center;width:100%;text-align:left;border-bottom:1px solid var(--sl);padding:10px 0;box-shadow:none!important}
+.ev-d{font-size:28px;color:var(--primary-color);min-width:70px;text-align:center;text-shadow:0 0 10px rgba(var(--pc-rgb),.5)}
+.ev.past{opacity:.5}
+.ev-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ev-n{font-size:15px}
+.wk{display:grid;grid-template-columns:1.25fr 1fr 1fr .9fr;gap:6px;align-items:center;border-bottom:1px solid var(--sl);padding:8px 0;font-size:13px}
+.wk.hd{font-size:10px;letter-spacing:.14em;color:var(--mu);text-transform:uppercase}
+.up{color:var(--primary-color)}.dn{color:var(--rd)}
+.bars7{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;height:104px;margin-top:10px}
+.bars7>div{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;font-size:9px;color:var(--mu);letter-spacing:.08em;min-width:0}
+.bars7 i{display:block;width:100%;background:linear-gradient(180deg,var(--primary-color),rgba(var(--pc-rgb),.2));min-height:2px;box-shadow:0 0 8px rgba(var(--pc-rgb),.35)}
+.bars7 .now{color:var(--primary-color)}
+.heat{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:10px}
+.heat i{aspect-ratio:2.2;border:1px solid rgba(var(--pc-rgb),.18);display:block}
+.heat i.t{border-color:var(--primary-color)}
+.spark{width:100%;height:56px;color:var(--primary-color);display:block;margin-top:8px}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.seg .btn{min-height:38px;padding:0 10px;flex:1}
+.seg .btn.on{background:rgba(var(--pc-rgb),.22);box-shadow:0 0 10px rgba(var(--pc-rgb),.4)}
+.mk-img{max-width:100%;max-height:320px;display:block;margin:8px auto;border:1px solid var(--sl)}
+.brief{min-height:120px}
+.brief .syslog-line{padding:4px 0;line-height:1.5;font-size:13px;letter-spacing:.02em}
+.lv-warn{color:var(--am)}.lv-crit{color:var(--rd)}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--mu);margin-top:6px}
+/* minimal-mode versions */
+html[data-mode="minimal"] .sec{letter-spacing:0;font-size:13px;text-transform:none;font-weight:500;margin-top:16px}
+html[data-mode="minimal"] .sec::before{display:none}
+html[data-mode="minimal"] .sec::after{background:var(--line)}
+html[data-mode="minimal"] #hero.on{background:var(--card);border:1px solid var(--line);border-radius:16px;-webkit-backdrop-filter:none;backdrop-filter:none}
+html[data-mode="minimal"] #hero.on::before,html[data-mode="minimal"] #hero.on::after{display:none}
+html[data-mode="minimal"] .g-out,html[data-mode="minimal"] .g-tick{display:none}
+html[data-mode="minimal"] .g-trk{stroke:var(--line)}
+html[data-mode="minimal"] .g-val{filter:none;stroke-linecap:round}
+html[data-mode="minimal"] .g-tx{font-family:var(--serif);fill:var(--tx);font-size:18px}
+html[data-mode="minimal"] .g-pc{fill:var(--mu);letter-spacing:0}
+html[data-mode="minimal"] .hero-t b{color:var(--tx);font-family:var(--serif);font-size:19px;text-shadow:none}
+html[data-mode="minimal"] .chip{border-radius:999px;letter-spacing:0;font-size:12px;border-color:var(--line2);color:var(--tx)}
+html[data-mode="minimal"] .chip.warn{color:var(--primary-color);border-color:rgba(var(--pc-rgb),.5)}
+html[data-mode="minimal"] .chip.crit{color:var(--rd);border-color:color-mix(in srgb,var(--rd) 50%,transparent)}
+html[data-mode="minimal"] .mic{border-color:var(--line2);color:var(--tx)}
+html[data-mode="minimal"] .cp{border-radius:99px;height:4px;background:var(--line)}
+html[data-mode="minimal"] .cp i,html[data-mode="minimal"] .card.am .cp i,html[data-mode="minimal"] .cp.full i{box-shadow:none;border-radius:99px;background:var(--primary-color)}
+html[data-mode="minimal"] .hab,html[data-mode="minimal"] .ev,html[data-mode="minimal"] .wk{border-bottom-color:var(--line)}
+html[data-mode="minimal"] .hab-box{border-radius:9px;border-color:var(--line2);color:var(--tx)}
+html[data-mode="minimal"] .hab.ok .hab-box{background:var(--primary-color);color:var(--on);box-shadow:none;border-color:var(--primary-color)}
+html[data-mode="minimal"] .hab-sub{letter-spacing:0;font-size:12px}
+html[data-mode="minimal"] .dots7 i{border-radius:50%;border-color:var(--line2)}
+html[data-mode="minimal"] .dots7 i.f{background:var(--primary-color);border-color:var(--primary-color)}
+html[data-mode="minimal"] .ev-d{font-family:var(--serif);text-shadow:none;color:var(--tx)}
+html[data-mode="minimal"] .wk.hd{letter-spacing:0;font-size:12px;text-transform:none}
+html[data-mode="minimal"] .bars7 i{background:var(--primary-color);border-radius:5px 5px 0 0;box-shadow:none}
+html[data-mode="minimal"] .bars7>div{letter-spacing:0;font-size:11px}
+html[data-mode="minimal"] .heat i{border-radius:4px;border-color:var(--line)}
+html[data-mode="minimal"] .seg .btn.on{background:var(--primary-color);color:var(--on);border-color:var(--primary-color);box-shadow:none}
+html[data-mode="minimal"] .mk-img{border-radius:10px;border-color:var(--line)}
+html[data-mode="minimal"] .brief .syslog-line{font-size:15px;letter-spacing:0;padding:5px 0}
+html[data-mode="minimal"] .lv-warn{color:var(--primary-color)}
+html[data-mode="minimal"] .cs.warn{color:var(--primary-color)}
+html[data-mode="minimal"] .up{color:var(--primary-color)}
+@media(max-width:480px){.card b{font-size:17px}html[data-mode="minimal"] .card b,html[data-mode="minimal"] .card.am b{font-size:20px}}
+/* ===== v5 ===== */
+::view-transition-old(root),::view-transition-new(root){animation-duration:.65s;animation-timing-function:cubic-bezier(.4,0,.2,1)}
+.netg{display:grid;grid-template-columns:1.4fr 1fr 1fr .8fr;gap:6px;align-items:center;margin:10px 0}
+.netg input{min-height:40px;text-align:center;margin:0;width:100%}
+.confetti{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:99}
+.confetti i{position:absolute;top:-14px;width:8px;height:14px;border-radius:2px;animation:cfall linear forwards}
+@keyframes cfall{to{top:105%;transform:translateX(40px) rotate(720deg);opacity:.9}}
+html[data-mode="minimal"] .netg input{border-radius:10px}
+
+html[data-mode="minimal"][data-look="dark"][data-acc="clay"]{--primary-color:#d97757;--pc-rgb:217,119,87;--am:#d97757}
+html[data-mode="minimal"][data-look="light"][data-acc="clay"]{--primary-color:#b04e2e;--pc-rgb:176,78,46;--am:#b04e2e}
+html[data-mode="minimal"][data-look="dark"][data-acc="sage"]{--primary-color:#8fb996;--pc-rgb:143,185,150;--am:#8fb996}
+html[data-mode="minimal"][data-look="light"][data-acc="sage"]{--primary-color:#3f7a52;--pc-rgb:63,122,82;--am:#3f7a52}
+html[data-mode="minimal"][data-look="dark"][data-acc="ocean"]{--primary-color:#6aa9e9;--pc-rgb:106,169,233;--am:#6aa9e9}
+html[data-mode="minimal"][data-look="light"][data-acc="ocean"]{--primary-color:#2c6aa8;--pc-rgb:44,106,168;--am:#2c6aa8}
+html[data-mode="minimal"][data-look="dark"][data-acc="plum"]{--primary-color:#c58bd9;--pc-rgb:197,139,217;--am:#c58bd9}
+html[data-mode="minimal"][data-look="light"][data-acc="plum"]{--primary-color:#8a4a9e;--pc-rgb:138,74,158;--am:#8a4a9e}
+html[data-mode="minimal"][data-look="dark"][data-acc="gold"]{--primary-color:#d9b24c;--pc-rgb:217,178,76;--am:#d9b24c}
+html[data-mode="minimal"][data-look="light"][data-acc="gold"]{--primary-color:#8f6b12;--pc-rgb:143,107,18;--am:#8f6b12}
+html.tt *,html.tt *::before,html.tt *::after{transition:color .45s ease,background-color .45s ease,border-color .45s ease,box-shadow .45s ease,fill .45s ease,stroke .45s ease,filter .45s ease!important}
+html[data-fx="low"][data-mode="hud"] body::after,html[data-fx="off"][data-mode="hud"] body::after,html[data-fx="low"] #app::before,html[data-fx="off"] #app::before,html[data-fx="low"] .card.scanin,html[data-fx="off"] .card.scanin{animation:none!important}
+html[data-fx="off"][data-mode="hud"] body::before,html[data-fx="off"][data-mode="hud"] body::after,html[data-fx="off"] .hf{display:none!important}
+.sw{flex:none;width:44px;height:44px;border-radius:50%;padding:0;min-height:44px;border:2px solid var(--line2)}
+.sw.on{outline:2px solid var(--tx);outline-offset:2px}
+.colin{width:100%;height:44px;padding:2px;margin-top:8px;background:transparent;border:1px solid var(--line2)}
+.trend{display:flex;gap:4px;align-items:flex-end;height:56px;margin-top:8px}
+.trend i{flex:1;display:block;background:var(--primary-color);opacity:.85;min-height:3px}
+html[data-mode="minimal"] .trend i{border-radius:4px 4px 0 0}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="hf" viewBox="0 0 34 34">
+  <path d="M1 22V1h21" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <path d="M6 7h8M10 3v8" stroke="currentColor" stroke-width="1"/>
+  <circle cx="10" cy="7" r="2.6" fill="none" stroke="currentColor" stroke-width=".8"/></symbol></svg>
+<svg class="hf tl" viewBox="0 0 34 34" aria-hidden="true"><use href="#hf"/></svg>
+<svg class="hf tr" viewBox="0 0 34 34" aria-hidden="true"><use href="#hf"/></svg>
+<svg class="hf bl" viewBox="0 0 34 34" aria-hidden="true"><use href="#hf"/></svg>
+<svg class="hf br" viewBox="0 0 34 34" aria-hidden="true"><use href="#hf"/></svg>
+   <!-- SYSTEM BOOT EKRANI KATMANI -->
+<div id="boot-screen">
+  <div style="font-size: 1.4rem; font-weight: bold; letter-spacing: 3px;">STARK-OS ONLINE</div>
+  <div style="font-size: 0.75rem; color: var(--primary-color); opacity: 0.7; margin-top: 6px;">INITIALIZING SYSTEM MODULES...</div>
+  <div class="boot-loader"></div>
+</div>
+<div id="app">
+<header class="hud">
+<div><h1><svg class="reactor" viewBox="0 0 24 24" aria-hidden="true"><g class="rg" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10.5" stroke-width="1" stroke-dasharray="3 2.2"/><circle cx="12" cy="12" r="7" stroke-width="1.2"/></g><path d="M12 7.2l4.1 7.1H7.9z" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg><span id="ttl">J.A.R.V.I.S. // BATCAVE OS</span></h1><div class="sub" id="hsub">UPTIME <span id="up">00:00:00</span> · SYNC <span id="sy">LOCKED</span></div></div>
+<div style="display:flex;gap:8px;align-items:center"><button class="btn" id="md" style="min-height:34px">MODE</button><button class="btn am" id="hs" style="min-height:34px">SETTINGS</button><span class="badge">MARK-XI PROTOCOL</span></div>
+</header>
+<div class="sub" id="telem"></div>
+<section id="hero" aria-label="Today"></section>
+<label class="drop" id="drop"><span id="dzt">[ UPLOAD SCREENSHOT / SCAN TERMINAL ]</span><div class="sub" style="margin-top:6px">Homework · Sleep · Steps · Nutrition · Exam results — auto-routed</div>
+<input type="file" id="file" accept="image/*" hidden></label>
+<main class="grid" id="grid"></main>
+</div>
+<div id="modal"><div class="sheet"><div class="sh"><span id="mt"></span><button class="btn rd" id="mx" style="min-height:36px">CLOSE</button></div><div id="mb"></div></div></div>
+<div id="lock"><svg class="reactor lock-reactor" viewBox="0 0 24 24" aria-hidden="true"><g class="rg" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10.5" stroke-width="1" stroke-dasharray="3 2.2"/><circle cx="12" cy="12" r="7" stroke-width="1.2"/></g><path d="M12 7.2l4.1 7.1H7.9z" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg><div class="badge">SECURITY PROTOCOL</div><div class="sub" id="lt">ENTER 4-DIGIT PASSCODE</div><div class="dots" id="dots"></div><div class="keys" id="keys"></div><button class="sub" id="lr">RESET THIS DEVICE</button><button class="sub" id="ls">LINK EXISTING VAULT (ENTER SALT)</button></div>
+<input type="file" id="bkf" accept=".json,application/json" hidden>
+<input type="file" id="mkf" accept="image/*" hidden>
+<div id="toast"></div>
+<script>
+/* ---------- Config ---------- */
+// Default model gemini-3.5-flash-lite; falls back to gemini-2.5-flash only if the first is missing (404).
+const MODELS=['gemini-3.5-flash-lite','gemini-2.5-flash'];
+/* ---------- Helpers (DOM built with textContent only: XSS-safe) ---------- */
+const $=id=>document.getElementById(id);
+const h=(t,a={},...c)=>{const e=document.createElement(t);for(const k in a){if(k==='class')e.className=a[k];else if(k==='value')e.value=a[k];else if(k.startsWith('on'))e[k]=a[k];else e.setAttribute(k,a[k])}c.flat().forEach(x=>e.append(x instanceof Node?x:document.createTextNode(typeof x==='string'?sm(x):(x??''))));return e};
+const isMin=()=>document.documentElement.dataset.mode==='minimal';
+function sc(s){ // ALL-CAPS labels -> sentence case (minimal mode only)
+  if(/[a-z]/.test(s)||(s.match(/[A-Z]/g)||[]).length<3)return s;
+  let t=s.toLowerCase().replace(/^\[j\.a\.r\.v\.i\.s\.\]\s*/,'').replace(/j\.a\.r\.v\.i\.s\./g,'Assistant')
+    .replace(/\b(json|pin|ocr|api|stem|pwa|ai|ui|tts|hud|tyt|ayt|yks|ics|xp)\b/g,m=>m.toUpperCase());
+  return t.replace(/^([^a-zA-Z0-9]*)([a-z])/,(m,a,b)=>a+b.toUpperCase());
+}
+function sm(s){return isMin()?sc(String(s)):s}
+const pad=n=>String(n).padStart(2,'0'),uid=()=>Math.random().toString(36).slice(2,9);
+const dk=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`,today=()=>dk(new Date());
+const tt=ts=>new Date(ts).toTimeString().slice(0,5),tsOf=(d,t)=>new Date(d+'T'+t+':00').getTime();
+const num=v=>{const n=parseFloat(String(v).trim().replace(',','.'));return isFinite(n)?n:null};
+const toast=m=>{const t=$('toast');t.textContent=sm(m);t.style.display='block';clearTimeout(t._);t._=setTimeout(()=>t.style.display='none',2600)};
+const hap=()=>{try{navigator.vibrate&&navigator.vibrate(12)}catch(e){}};
+/* ---------- Sound (Web Audio synthesizer) ---------- */
+let AC,MG;
+const VOLS=['LOW','NORMAL','HIGH'],vol=()=>{const v=+(localStorage.getItem('jv.vol')??1);return v>=0&&v<=2?Math.round(v):1};
+function OUT(){if(!MG||MG.context!==AC){MG=AC.createGain();MG.connect(AC.destination)}MG.gain.value=[.45,1,1.9][vol()];return MG}
+function tone(f0,f1,t,d,type,v){const o=AC.createOscillator(),g=AC.createGain();o.type=type||'sine';o.frequency.setValueAtTime(f0,t);if(f1!==f0)o.frequency.exponentialRampToValueAtTime(f1,t+d);
+g.gain.setValueAtTime(v||.06,t);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g);g.connect(OUT());o.start(t);o.stop(t+d+.02)}
+/* soft voice for Minimal mode: sine + gentle attack + low-pass, like a wooden chime */
+function soft(f,t,d,v){const o=AC.createOscillator(),g=AC.createGain(),lp=AC.createBiquadFilter();
+o.type='sine';o.frequency.setValueAtTime(f,t);lp.type='lowpass';lp.frequency.value=2400;
+g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(v||.05,t+.012);g.gain.exponentialRampToValueAtTime(.0001,t+d);
+o.connect(lp);lp.connect(g);g.connect(OUT());o.start(t);o.stop(t+d+.03);
+/* faint octave overtone gives a warm bell colour */
+const o2=AC.createOscillator(),g2=AC.createGain();o2.type='sine';o2.frequency.setValueAtTime(f*2,t);
+g2.gain.setValueAtTime(.0001,t);g2.gain.linearRampToValueAtTime((v||.05)*.25,t+.01);g2.gain.exponentialRampToValueAtTime(.0001,t+d*.6);
+o2.connect(g2);g2.connect(OUT());o2.start(t);o2.stop(t+d);}
+/* HUD voice: layered sub-bass + filtered square for a more "machine" body */
+function hudBody(f,t,d,v){const o=AC.createOscillator(),g=AC.createGain(),bp=AC.createBiquadFilter();
+o.type='square';o.frequency.setValueAtTime(f,t);bp.type='bandpass';bp.frequency.value=f*1.5;bp.Q.value=6;
+g.gain.setValueAtTime(v||.03,t);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(bp);bp.connect(g);g.connect(OUT());o.start(t);o.stop(t+d+.02)}
+function sndSoft(k,t){
+switch(k){
+case'key':soft(560,t,.07,.035);break;
+case'click':soft(420,t,.08,.03);break;
+case'unlock':[523.25,659.25,783.99,1046.5].forEach((f,i)=>soft(f,t+i*.11,.55,.05));break; // C-E-G-C open arpeggio
+case'ocr':case'scan':soft(784,t,.3,.045);soft(1174.7,t+.12,.4,.04);break; // two gentle chimes
+case'warn':soft(392,t,.35,.05);soft(311.1,t+.2,.5,.05);break; // soft falling pair
+case'deny':soft(196,t,.4,.06);break;
+case'err':soft(330,t,.25,.05);soft(247,t+.15,.4,.05);break;
+case'ok':soft(659.25,t,.28,.045);soft(880,t+.09,.4,.045);break; // rising E-A
+}}
+function sndHud(k,t){
+switch(k){
+case'key':tone(880,880,t,.04);hudBody(220,t,.05,.02);break;
+case'click':tone(660,660,t,.03);tone(1320,1320,t+.015,.02,'sine',.025);break;
+case'unlock':[0,.09,.18,.27].forEach((o,i)=>tone(300*Math.pow(1.5,i),600*Math.pow(1.5,i),t+o,.16,'triangle',.07));tone(55,110,t,.5,'sine',.09);tone(1500,2400,t+.38,.35,'sine',.05);tone(2400,3200,t+.5,.3,'sine',.03);break;
+case'ocr':case'scan':tone(300,1800,t,.22,'sawtooth',.025);[.24,.38,.52].forEach(o=>tone(1400,1400,t+o,.08,'square',.04));break; // sweep + triple beep
+case'warn':tone(880,660,t,.18,'sawtooth',.06);tone(880,660,t+.24,.18,'sawtooth',.06);tone(440,330,t+.48,.3,'sawtooth',.06);tone(60,50,t,.7,'sine',.08);break;
+case'deny':tone(190,120,t,.28,'sawtooth');tone(60,40,t,.3,'sine',.09);break;
+case'err':tone(300,200,t,.12,'sawtooth');tone(200,140,t+.14,.18,'sawtooth');break;
+case'ok':[520,780,1040].forEach((f,i)=>tone(f,f,t+i*.06,.1));tone(1560,1560,t+.2,.14,'sine',.03);break;
+}}
+function snd(k){
+if(localStorage.getItem('jv.mute')==='1')return;
+try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();const t=AC.currentTime;
+if(isMin())sndSoft(k,t);else sndHud(k,t);
+}catch(e){}
+}
+/* HUD: brief scan-in flash on card tap */
+document.addEventListener('pointerdown',e=>{if(isMin())return;const c=e.target.closest&&e.target.closest('.card');if(!c)return;c.classList.remove('scanin');void c.offsetWidth;c.classList.add('scanin')});
+document.addEventListener('click',e=>{if(e.target.closest('button,label.drop')&&!e.target.closest('#keys'))snd('click')});
+/* ---------- Speech output (Web Speech API) ---------- */
+const ttsOn=()=>localStorage.getItem('jv.tts')==='1';
+function speak(text,force){
+if((!force&&!ttsOn())||!('speechSynthesis' in window))return;
+try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(String(text).replace(/[*_`#>]/g,'').slice(0,1500)),vs=speechSynthesis.getVoices();
+u.lang='en-GB';u.rate=1.02;u.pitch=.9;const v=vs.find(x=>/en-GB/i.test(x.lang))||vs.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;speechSynthesis.speak(u)}catch(e){}
+}
+function tglVoice(){const b=h('button',{class:'btn',onclick:()=>{
+if(!('speechSynthesis' in window)){toast('SPEECH OUTPUT NOT SUPPORTED HERE');return}
+const on=!ttsOn();localStorage.setItem('jv.tts',on?'1':'0');if(!on)speechSynthesis.cancel();b.textContent=on?'VOICE: ON':'VOICE: OFF';if(on)speak('Voice output online.')}},ttsOn()?'VOICE: ON':'VOICE: OFF');return b}
+/* ---------- Themes (CSS root variables) ---------- */
+const THEMES={
+  cyan:  ['JARVIS Cyan',  '#00f3ff','0,243,255',{am:'#ffb700',sl:'#1e232a',tx:'#d8f8ff'}],
+  mark:  ['MARK Red/Gold','#ff2d3d','255,45,61', {am:'#ffc53d',sl:'#2a1a1c',tx:'#ffeedd'}],
+  strike:['STRIKE Mode',  '#ff6a00','255,106,0', {am:'#ffd23f',sl:'#262626',tx:'#e6e6e6'}],
+  green: ['Matrix Green', '#00ff41','0,255,65'],
+  amber: ['Amber Gold',   '#ffb700','255,183,0'],
+  red:   ['Red Alert',    '#ff2d3d','255,45,61'],
+  ice:   ['Ice Blue',     '#4da6ff','77,166,255', {am:'#ffd166',sl:'#18212b',tx:'#e3f1ff'}],
+  quantum:['Quantum Violet','#b26bff','178,107,255',{am:'#ffd166',sl:'#221a2e',tx:'#f1e6ff'}],
+  rose:  ['Neon Rose',    '#ff4fa3','255,79,163', {am:'#ffd166',sl:'#2a1a24',tx:'#ffe6f3'}],
+  teal:  ['Arc Teal',     '#1de9b6','29,233,182', {am:'#ffd166',sl:'#14262a',tx:'#dcfff6'}],
+  silver:['Wayne Silver', '#cfd8dc','207,216,220',{am:'#ffb700',sl:'#262b2e',tx:'#f2f6f8'}]
+};
+const HEX=/^#[0-9a-f]{6}$/i,hex2rgb=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16)).join(',');
+const customHex=()=>{const c=localStorage.getItem('jv.custom');return HEX.test(c||'')?c:'#00f3ff'};
+THEMES.custom=['Custom',customHex(),hex2rgb(customHex()),{am:'#ffb700',sl:'#1e232a',tx:'#e8f4f8'}];
+const LOOKS=['auto','light','dark'],ACCS={clay:['Clay','#d97757','#b04e2e'],sage:['Sage','#8fb996','#3f7a52'],ocean:['Ocean','#6aa9e9','#2c6aa8'],plum:['Plum','#c58bd9','#8a4a9e'],gold:['Gold','#d9b24c','#8f6b12']};
+const lookPref=()=>{const l=localStorage.getItem('jv.look');return LOOKS.includes(l)?l:'auto'};
+const lookNow=()=>{const l=lookPref();return l==='auto'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):l};
+const accNow=()=>{const a=localStorage.getItem('jv.macc');return a==='custom'||ACCS[a]?a:'clay'};
+const fxNow=()=>{const f=localStorage.getItem('jv.fx');return f==='low'||f==='off'?f:'full'};
+function themeFade(fn){const r=document.documentElement;if(matchMedia('(prefers-reduced-motion: reduce)').matches){fn();return}r.classList.add('tt');fn();clearTimeout(themeFade._);themeFade._=setTimeout(()=>r.classList.remove('tt'),520)}
+function applyTheme(n,tmp){ // tmp: goal-driven theme, shown but not saved as the user's choice
+  const k=THEMES[n]?n:'cyan',t=THEMES[k],r=document.documentElement,st=r.style,x=t[3]||{};
+  if(r.dataset.mode==='minimal'){['--primary-color','--pc-rgb','--am','--sl','--tx'].forEach(p=>st.removeProperty(p));
+    if(accNow()==='custom'){const c=customHex();st.setProperty('--primary-color',c);st.setProperty('--pc-rgb',hex2rgb(c));st.setProperty('--am',c)}}
+  else{
+    st.setProperty('--primary-color',t[1]);st.setProperty('--pc-rgb',t[2]);
+    st.setProperty('--am',x.am||'#ffb700');st.setProperty('--sl',x.sl||'#1e232a');st.setProperty('--tx',x.tx||'#d8f8ff');
+  }
+  r.dataset.theme=k;if(!tmp)localStorage.setItem('jv.theme',k);
+}
+function setCustom(c){if(!HEX.test(c))return;localStorage.setItem('jv.custom',c);THEMES.custom=['Custom',c,hex2rgb(c),{am:'#ffb700',sl:'#1e232a',tx:'#e8f4f8'}];
+  if(isMin()){localStorage.setItem('jv.macc','custom');document.documentElement.dataset.acc='custom'}else{localStorage.setItem('jv.autotheme','0');autoCur=''}
+  applyTheme(isMin()?(localStorage.getItem('jv.theme')||'cyan'):'custom')}
+function themeBlock(){
+  const pick=h('input',{type:'color',class:'colin',value:customHex(),'aria-label':'Custom colour'});
+  pick.oninput=()=>setCustom(pick.value);pick.onchange=()=>{setCustom(pick.value);snd('ok')};
+  const fxb=h('div',{class:'row'},[['full','FX: FULL'],['low','FX: CALM'],['off','FX: OFF']].map(([k,l])=>h('button',{class:'btn'+(fxNow()===k?' am':''),style:'flex:1',onclick:()=>{localStorage.setItem('jv.fx',k);document.documentElement.dataset.fx=k;snd('ok');settingsModal()}},l)));
+  if(!isMin())return h('div',{},h('div',{class:'row'},themeSwatches()),h('div',{class:'sub',style:'margin-top:12px'},'CUSTOM COLOUR'),pick,h('div',{class:'sub',style:'margin-top:12px'},'EFFECTS'),fxb);
+  const lk=h('div',{class:'row'},LOOKS.map(k=>h('button',{class:'btn'+(lookPref()===k?' am':''),style:'flex:1',onclick:()=>{localStorage.setItem('jv.look',k);themeFade(()=>{document.documentElement.dataset.look=lookNow();applyMode('minimal')});snd('ok');settingsModal()}},k.toUpperCase())));
+  const ac=h('div',{class:'row'},Object.keys(ACCS).map(k=>h('button',{class:'btn sw'+(accNow()===k?' on':''),'aria-label':ACCS[k][0]+' accent',title:ACCS[k][0],style:'background:'+(lookNow()==='light'?ACCS[k][2]:ACCS[k][1]),onclick:()=>{localStorage.setItem('jv.macc',k);themeFade(()=>{document.documentElement.dataset.acc=k;applyTheme(localStorage.getItem('jv.theme')||'cyan')});snd('ok');settingsModal()}},'')));
+  return h('div',{},h('div',{class:'sub'},'APPEARANCE'),lk,h('div',{class:'sub',style:'margin-top:12px'},'ACCENT'),ac,h('div',{class:'sub',style:'margin-top:12px'},'CUSTOM ACCENT'),pick);
+}
+function themeSwatches(){const c=localStorage.getItem('jv.theme')||'cyan';
+return Object.keys(THEMES).map(k=>h('button',{class:'btn',style:`border-color:${THEMES[k][1]};color:${THEMES[k][1]};flex:1;min-width:120px`,onclick:()=>{localStorage.setItem('jv.autotheme','0');autoCur='';themeFade(()=>applyTheme(k));snd('ok');toast('THEME: '+THEMES[k][0].toUpperCase());settingsModal()}},(c===k?'● ':'')+THEMES[k][0]))}
+applyTheme(localStorage.getItem('jv.theme')||'cyan');
+/* ===== HUD FX ===== */
+const _typing=new WeakMap();
+function typeText(el,text,o={}){
+  text=String(text??'');
+  const prev=_typing.get(el);if(prev)prev.stop();
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return new Promise(res=>{
+    if(reduce||!text){el.textContent=text;o.onTick&&o.onTick();res();return}
+    const total=Math.min(3000,Math.max(400,text.length*(o.speed||18))),t0=performance.now();let raf,done=false,last=0;
+    const end=full=>{if(done)return;done=true;cancelAnimationFrame(raf);if(full)el.textContent=text;el.classList.remove('typing');_typing.delete(el);res()};
+    _typing.set(el,{stop:()=>end(false)});
+    el.textContent='';el.classList.add('typing');
+    const step=now=>{
+      const n=Math.min(text.length,Math.floor((now-t0)/total*text.length)+1);
+      el.textContent=text.slice(0,n);o.onTick&&o.onTick();
+      if(o.beep&&n-last>=6&&typeof snd==='function'){last=n;snd('key')}
+      if(n>=text.length)end(true);else raf=requestAnimationFrame(step)};
+    raf=requestAnimationFrame(step);
+  });
+}
+function sysLog(box,text,level){
+  const d=h('div',{class:'syslog-line'});box.append(d);
+  typeText(d,'> '+text,{onTick:()=>{box.scrollTop=box.scrollHeight}});
+  if(level)alertFx(d,level,level==='crit'?0:4000);return d;
+}
+function alertFx(el,level='warn',ms=2400){
+  if(!el)return;const c='fx-'+level;
+  el.classList.remove('fx-warn','fx-crit','fx-glitch');void el.offsetWidth;el.classList.add(c);
+  if(ms)setTimeout(()=>el.classList.remove(c),ms);
+}
+(function(){
+  const el=document.getElementById('telem');if(!el)return;let bat='';
+  if(navigator.getBattery)navigator.getBattery().then(b=>{const u=()=>{bat=` · PWR ${Math.round(b.level*100)}%${b.charging?' ⚡':''}`};u();b.onlevelchange=b.onchargingchange=u}).catch(()=>{});
+  const tick=()=>{el.textContent=`${navigator.onLine?'NET ONLINE':'NET OFFLINE'}${bat} · ${new Date().toTimeString().slice(0,8)}`;el.classList.toggle('fx-warn',!navigator.onLine)};
+  tick();setInterval(tick,1000);addEventListener('online',tick);addEventListener('offline',tick);
+})();
+document.querySelector('.hud .badge').addEventListener('click',()=>{
+  if(isMin())return;
+  const ks=['cyan','mark','strike'],c=localStorage.getItem('jv.theme')||'cyan',n=ks[(Math.max(0,ks.indexOf(c))+1)%3];
+  localStorage.setItem('jv.autotheme','0');autoCur='';applyTheme(n);snd('ok');toast('THEME: '+THEMES[n][0].toUpperCase());
+});
+/* ===== DISPLAY MODE: HUD (Stark/Wayne) <-> Minimal ===== */
+const RELABEL=['hs','md','mx','lr','ls'];
+function relabel(){
+  {const z=document.getElementById('dzt'),d=document.getElementById('drop');if(z&&d&&!d.classList.contains('busy')&&!d.classList.contains('err'))z.textContent=isMin()?'Upload a screenshot to scan':'[ UPLOAD SCREENSHOT / SCAN TERMINAL ]'}
+  RELABEL.forEach(id=>{const e=$(id);if(!e)return;if(!e.dataset.o)e.dataset.o=e.textContent;e.textContent=isMin()?sc(e.dataset.o):e.dataset.o});
+  $('ttl').textContent=isMin()?'Daily planner':'J.A.R.V.I.S. // BATCAVE OS';
+  document.title=isMin()?'Daily planner':'J.A.R.V.I.S. // BATCAVE OS';
+}
+function applyMode(m,init){
+  const mode=m==='minimal'?'minimal':'hud';
+  document.documentElement.dataset.mode=mode;localStorage.setItem('jv.mode',mode);
+  document.documentElement.dataset.look=lookNow();document.documentElement.dataset.acc=accNow();document.documentElement.dataset.fx=fxNow();
+  applyTheme(localStorage.getItem('jv.theme')||'cyan');relabel();
+  const meta=document.querySelector('meta[name=theme-color]');
+  if(meta)meta.content=mode==='minimal'?(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()||'#262624'):'#000000';
+  if(!init&&K){autoCur='';const st=formGrab(['mb']);render();if(cur&&$('modal').classList.contains('on')){$('mt').textContent=sm(cur.title||'');$('mb').replaceChildren(cur.mk())}formPut(['mb'],st)}
+}
+function modeButtons(){
+  return [['hud','HUD · Stark/Wayne'],['minimal','Minimal · Claude style']].map(([k,l])=>
+    h('button',{class:'btn'+((isMin()?'minimal':'hud')===k?' am':''),style:'flex:1;min-width:150px',onclick:()=>{snd('ok');modeSwitch(k,()=>settingsModal())}},((isMin()?'minimal':'hud')===k?'● ':'')+l));
+}
+applyMode(localStorage.getItem('jv.mode'),true);
+$('md').onclick=()=>{const to=isMin()?'hud':'minimal';snd('ok');modeSwitch(to,()=>toast(to==='minimal'?'Minimal mode':'HUD mode'))};
+matchMedia('(prefers-color-scheme: light)').addEventListener('change',()=>{if(isMin())applyMode('minimal')});
+(function(){const g=$('grid');g.classList.add('boot');new MutationObserver((m,ob)=>{ob.disconnect();setTimeout(()=>g.classList.remove('boot'),1400)}).observe(g,{childList:true})})();
+/* ---------- State, vault & offline-first sync ---------- */
+const blank=()=>({t:0,weight:{},sleep:{},steps:{},hw:[],refuel:{},gym:{},exams:[],study:{},run:null,runSubj:'',acad:[],pushups:{},habits:[],hlog:{},mistakes:[],events:[],reminders:[],tasks:[],journal:{},timetable:{},
+nets:[],targets:{kcal:2800,pro:150,carb:300,fat:80,caf:400,study:120,pu:50,steps:8000,sleep:8}});
+// Older vaults and backups lack the newer keys: make sure every collection exists with the right shape.
+function normS(){const b=blank();for(const k in b){if(Array.isArray(b[k])){if(!Array.isArray(S[k]))S[k]=[]}else if(b[k]&&typeof b[k]==='object'){if(!S[k]||typeof S[k]!=='object'||Array.isArray(S[k]))S[k]={}}
+if(Array.isArray(S[k]))S[k]=S[k].filter(x=>x&&typeof x==='object')}
+if(typeof S.runSubj!=='string')S.runSubj='';S.targets={...b.targets,...(S.targets&&typeof S.targets==='object'?S.targets:{})};
+S.exams.forEach(e=>{if(!Array.isArray(e.topics))e.topics=[]});S.events.forEach(e=>{if(!Array.isArray(e.topics))e.topics=[]});
+S.tasks=S.tasks.filter(x=>!x.done||Date.now()-(x.doneAt||0)<45*864e5)} // finished missions are dropped after 45 days
+let S=blank(),K='',vault='',ref=null,tm=null,cur=null;
+let synced=false,fresh=false,baseT=0; // synced: the server copy has been seen this session · fresh: no local vault at unlock · baseT: local timestamp at unlock
+const enc=new TextEncoder(),hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const sha=async s=>hex(await crypto.subtle.digest('SHA-256',enc.encode(s)));
+const DEFAULT_SALT='c7542a0dc13bb51c80e897b4d2e2dc48';
+const getSalt=()=>{let s=localStorage.getItem('jv.salt');if(!s){s=DEFAULT_SALT;localStorage.setItem('jv.salt',s)}return s};
+async function vaultId(pin,salt){
+const km=await crypto.subtle.importKey('raw',enc.encode(pin),'PBKDF2',false,['deriveBits']);
+const bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:enc.encode('stark-os:'+salt),iterations:200000},km,256);
+return sha(hex(bits)+':'+salt); // 64-char hex Firestore document id
+}
+const setSync=t=>{const e=$('sy');e.textContent=t;
+  e.classList.toggle('fx-crit',/ERROR/.test(t));
+  e.classList.toggle('fx-warn',/OFFLINE|QUEUED/.test(t)&&!/ERROR/.test(t))};
+const pending=()=>localStorage.getItem('jv.pend')==='1';
+function save(){S.t=Date.now();localStorage.setItem(K,JSON.stringify(S));localStorage.setItem('jv.pend','1');clearTimeout(tm);tm=setTimeout(push,600);render()}
+function push(){
+if(!ref)return;
+if(!navigator.onLine){setSync('OFFLINE · QUEUED');return}
+if(!synced){setSync('SYNCING · QUEUED');return} // the cloud copy must be read before anything is written over it
+const t=S.t;
+ref.set({json:JSON.stringify(S),t}).then(()=>{if(S.t===t)localStorage.setItem('jv.pend','0');setSync('LINKED')},e=>{console.error('[sync] write failed',e);setSync('SYNC ERROR · QUEUED')});
+}
+addEventListener('online',()=>{if(ref){setSync('RECONNECTED');if(pending())push()}});
+addEventListener('offline',()=>{if(ref)setSync(pending()?'OFFLINE · QUEUED':'OFFLINE')});
+function initCloud(){
+let cfg=null;try{cfg=JSON.parse(localStorage.getItem('jv.fbcfg'))}catch(e){}
+if(!window.firebase||!cfg||!cfg.apiKey||!cfg.projectId){setSync('LOCAL ONLY');return}
+try{
+if(!firebase.apps.length)firebase.initializeApp(cfg);
+ref=firebase.firestore().collection('vaults').doc(vault);
+ref.onSnapshot({includeMetadataChanges:true},s=>{
+if(s.metadata.hasPendingWrites)return;
+if(s.metadata.fromCache){setSync(navigator.onLine?'SYNCING':(pending()?'OFFLINE · QUEUED':'OFFLINE'));return} // a cached copy is not the truth: wait for the server
+const first=!synced;synced=true;
+if(s.exists){try{const r={...blank(),...JSON.parse(s.data().json)};
+if(r.t>S.t||(first&&(fresh?r.t>0:r.t>baseT))){ // cloud is newer — also when it changed since this device last saw it, or this device had no vault yet
+if(first&&S.t>r.t&&!fresh)toast('CLOUD COPY WAS NEWER — YOUR LAST TAP WAS NOT KEPT');
+const mine=S.t>0&&!fresh?JSON.stringify(S):'';
+if(mine.length>2000&&s.data().json.length<mine.length/2){idb.set('snap',K+'|'+today()+' before sync',mine).catch(()=>{});toast('CLOUD COPY IS MUCH SMALLER — RESTORE POINT SAVED')}
+S=r;normS();localStorage.setItem(K,JSON.stringify(S));localStorage.setItem('jv.pend','0');render(true)}
+else if(S.t>r.t)push()}catch(e){console.error(e)}}
+else if(S.t)push();
+fresh=false;
+setSync(navigator.onLine?'LINKED':'OFFLINE · QUEUED');
+},e=>{console.error('[sync] listen failed',e);setSync('SYNC ERROR')});
+if(pending())push();
+}catch(e){console.error('[sync] init failed',e);setSync('SYNC ERROR')}
+}
+/* ---------- Passcode ---------- */
+let pin='';
+const drawDots=()=>$('dots').replaceChildren(...[0,1,2,3].map(i=>h('i',{class:i<pin.length?'f':''})));
+['1','2','3','4','5','6','7','8','9','CLR','0','⌫'].forEach(k=>$('keys').append(h('button',{class:'btn',onclick:()=>{hap();snd('key');
+if(k==='CLR')pin='';else if(k==='⌫')pin=pin.slice(0,-1);else if(pin.length<4)pin+=k;drawDots();if(pin.length===4)unlock()}},k)));
+async function unlock(){
+const vid=await vaultId(pin,getSalt()),ph=await sha('ph:'+vid),have=localStorage.getItem('jv.ph2');
+if(have&&have!==ph){snd('warn');$('lt').textContent='ACCESS DENIED';pin='';drawDots();return}
+localStorage.setItem('jv.ph2',ph);vault=vid;K='jv.'+vid.slice(0,16);
+const old='jv.'+(await sha('jv-vault:'+pin)).slice(0,16); // migrate data saved before salted vault ids
+if(!localStorage.getItem(K)&&localStorage.getItem(old))localStorage.setItem(K,localStorage.getItem(old));
+fresh=!localStorage.getItem(K);synced=false;
+pin='';try{S={...blank(),...JSON.parse(localStorage.getItem(K))}}catch(e){S=blank()}
+normS();baseT=S.t;snapshot(); // restore point is taken before the cloud is contacted
+snd('unlock');$('lock').classList.remove('on');setSync('LOCAL');initCloud();render();toast('ACCESS GRANTED — WELCOME BACK, SIR');setTimeout(afterUnlock,700);
+}
+$('lr').onclick=()=>{if(confirm('Forget the passcode on this device? Local data stays until browser data is cleared.')){localStorage.removeItem('jv.ph2');$('lt').textContent='NEW PASSCODE: ENTER 4 DIGITS'}};
+$('ls').onclick=()=>{const v=(prompt('Paste the vault salt from your other device (Settings > Vault salt):')||'').trim().toLowerCase();
+if(/^[0-9a-f]{16,64}$/.test(v)){localStorage.setItem('jv.salt',v);localStorage.removeItem('jv.ph2');$('lt').textContent='SALT LINKED — ENTER YOUR PASSCODE'}else if(v)toast('INVALID SALT FORMAT')};
+$('lt').textContent=localStorage.getItem('jv.ph2')?'ENTER 4-DIGIT PASSCODE':'SET A NEW 4-DIGIT PASSCODE';
+drawDots();$('lock').classList.add('on');
+/* ---------- Modal ---------- */
+function modal(title,mk,live=true){cur={mk,live,title};$('mt').textContent=sm(title);$('mb').replaceChildren(mk());$('modal').classList.add('on')}
+$('mx').onclick=()=>{$('modal').classList.remove('on');cur=null};
+/* ---------- Gemini ---------- */
+const key=()=>localStorage.getItem('gemini_api_key')||localStorage.getItem('jv.key')||'';
+async function gem(parts,json,hist){
+if(!key()){toast('NO API KEY — OPEN SETTINGS');throw new Error('key')}
+let last;
+for(const m of MODELS){
+const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key()},
+body:JSON.stringify({contents:[...(hist||[]),{role:'user',parts}],generationConfig:json?{responseMimeType:'application/json'}:{}})});
+const j=await r.json().catch(()=>({}));
+if(r.ok){
+const t=j.candidates?.[0]?.content?.parts?.map(p=>p.text).join('')||'';
+if(!json)return t;
+try{return JSON.parse(t)}catch(e){console.error('[Gemini] non-JSON reply:',t);throw new Error('Model returned non-JSON: '+t.slice(0,80))}
+}
+console.error('[Gemini] request failed',{model:m,status:r.status,body:j});
+last=new Error(`${r.status} ${j.error?.status||''} ${j.error?.message||'API error'} [${m}]`.replace(/\s+/g,' '));
+if(r.status!==404)throw last; // only try the next model when this one is missing
+}
+throw last;
+}
+const ctx=()=>{const T=today(),st=studyMin(T),rf=(S.refuel[T]||[]);return `Date ${T}. Weight ${S.weight[T]??'n/a'} kg. Sleep ${JSON.stringify(S.sleep[T]||null)}. Steps ${JSON.stringify(S.steps[T]||null)}. Study today ${st} min. Push-ups today ${puTotal(T)}. Calories ${rf.reduce((a,x)=>a+x.kcal,0)} kcal, protein ${rf.reduce((a,x)=>a+x.pro,0)} g. Open homework ${JSON.stringify(S.hw.filter(x=>!x.done).map(x=>({s:x.subj,t:x.title,due:x.due})))}. Day score ${dayScore(T).pct}%. Habits ${JSON.stringify(habitsOn(T).map(x=>({name:x.name,done:habDone(x,T)})))}. Next exam ${nextEv()?nextEv().name+' in '+dLeft(nextEv())+' days':'none set'}. Error-log reviews due ${mkDue().length}. Open missions ${JSON.stringify(tkToday().filter(x=>!x.done).map(x=>x.t))}.`};
+/* ---------- Scan terminal (Gemini Vision auto-routing) ---------- */
+const SCAN=`You are the J.A.R.V.I.S. scan router. Today is ${today()}. Classify the input into exactly one module and extract data. Reply ONLY JSON:
+{"type":"refuel|academics|biometrics|exam|homework|unknown",
+"refuel":{"items":[{"name":"","qty":"","kcal":0,"protein":0,"carbs":0,"fat":0,"caffeine":0}]},
+"academics":{"subject":"Physics|Math|Chemistry","problem":"problem statement, LaTeX allowed","steps":[{"label":"Given / Formula / Substitute / Solve …","tex":"one LaTeX line, no $ delimiters"}],"answer":{"tex":"final answer in LaTeX with units"}},
+"biometrics":{"sleep_hours":null,"sleep_quality":"","steps":null,"active_kcal":null,"weight_kg":null,"workout":[{"exercise":"","sets":[{"kg":0,"reps":0}]}]},
+"exam":{"subject":"","score":0,"total":0,"topics":[{"topic":"","correct":0,"wrong":0}]},
+"homework":{"subject":"","title":"","description":"","due":"YYYY-MM-DD or empty"}}
+Rules: food/nutrition/macro labels or meals -> refuel. Physics (kinematics, free fall, projectile motion, dynamics, energy) and math problems or equations -> academics: list the knowns and unknowns, name the governing formula (e.g. v=v_0+at, s=v_0 t+\\tfrac{1}{2}at^2, v^2=v_0^2+2as, g=9.8\\,\\text{m/s}^2), substitute the numbers, then solve step by step with units. Every "tex" value must be valid LaTeX with EVERY backslash doubled (\\\\frac) so the JSON stays valid. Sleep/steps/weight/workout screens -> biometrics (use null for absent fields, exact decimals for weight). Test results/score tables -> exam. Assignment lists with due dates -> homework. Fill only the matching object; keep original-language names.`;
+const MOD={refuel:'REFUEL',academics:'ACADEMICS',biometrics:'BIOMETRICS',exam:'EXAM ANALYTICS',homework:'HOMEWORK'};
+function route(d){
+const T=today(),n=x=>Number(x)||0,str=(x,m=200)=>String(x??'').slice(0,m);let ok=false;
+if(d.type==='refuel'&&d.refuel?.items?.length){(S.refuel[T]=S.refuel[T]||[]).push(...d.refuel.items.map(i=>({id:uid(),name:str(i.name||'Item'),qty:str(i.qty,40),kcal:n(i.kcal),pro:n(i.protein),carb:n(i.carbs),fat:n(i.fat),caf:n(i.caffeine)})));ok=true}
+else if(d.type==='academics'&&d.academics){const a=d.academics,fx=v=>str(v,1500).replace(/\x0c/g,'\\f').replace(/\t/g,'\\t').replace(/\x08/g,'\\b').replace(/\r/g,'\\r'); // repair \f \t \b \r eaten by JSON escapes
+S.acad.unshift({id:uid(),date:T,subject:str(a.subject||'STEM',60),problem:fx(a.problem||'Problem'),steps:(a.steps||[]).slice(0,30).map(x=>typeof x==='string'?{label:'',tex:fx(x)}:{label:str(x&&x.label,80),tex:fx(x&&x.tex)}),answer:typeof a.answer==='string'?fx(a.answer):fx(a.answer&&a.answer.tex||'')});ok=true}
+else if(d.type==='biometrics'&&d.biometrics){const b=d.biometrics;
+if(b.sleep_hours!=null){S.sleep[T]={h:n(b.sleep_hours),q:str(b.sleep_quality)};ok=true}
+if(b.steps!=null){S.steps[T]={n:n(b.steps),kcal:n(b.active_kcal)};ok=true}
+if(b.weight_kg!=null&&n(b.weight_kg)>=20&&n(b.weight_kg)<=400){S.weight[T]=n(b.weight_kg);ok=true}
+if(b.workout?.length){S.gym[T]=[...(S.gym[T]||[]),...b.workout.map(w=>({ex:str(w.exercise||'Exercise',80),sets:(w.sets||[]).map(s=>[n(s.kg),n(s.reps)])}))];ok=true}}
+else if(d.type==='exam'&&d.exam){const e=d.exam;S.exams.unshift({id:uid(),date:T,subject:str(e.subject||'Exam',60),score:n(e.score),total:n(e.total),topics:(e.topics||[]).map(x=>({t:str(x.topic,80),c:n(x.correct),w:n(x.wrong)}))});ok=true}
+else if(d.type==='homework'&&d.homework){const x=d.homework;S.hw.unshift({id:uid(),subj:str(x.subject||'Unknown',60),title:str(x.title||'Untitled'),desc:str(x.description,1000),due:str(x.due,10),done:0});ok=true}
+if(!ok){snd('warn');toast('[J.A.R.V.I.S.] UNRECOGNIZED DATAPOINT');return}
+snd('ocr');save();toast(`[J.A.R.V.I.S.] DATAPOINT AUTO-ROUTED TO ${MOD[d.type]} MODULE`);
+}
+const DZT='[ UPLOAD SCREENSHOT / SCAN TERMINAL ]';let dzT;
+function dz(msg,busy){clearTimeout(dzT);$('dzt').textContent=msg?sm(msg):(isMin()?'Upload a screenshot to scan':DZT);$('drop').classList.remove('err');$('drop').classList.toggle('busy',!!busy)}
+function dzErr(e){snd('warn');console.error('[J.A.R.V.I.S. scan] FAILED:',e);clearTimeout(dzT);$('drop').classList.remove('busy');$('drop').classList.add('err');
+$('dzt').textContent='ERROR: '+String(e&&e.message||e).slice(0,160);dzT=setTimeout(()=>dz(),9000)}
+async function scan(parts,label='IMAGE'){
+if(!K){toast('UNLOCK THE VAULT FIRST');dz();return}
+if(!key()){toast('NO API KEY — OPEN SETTINGS');dz();return}
+dz(`J.A.R.V.I.S. PARSING ${label}...`,1);
+try{route(await gem([{text:SCAN.replace(/Today is \d{4}-\d\d-\d\d/,'Today is '+today())},...parts],true));dz()}
+catch(e){if(e.message!=='key')dzErr(e);else dz()}
+}
+// File -> {mimeType,data}: header prefix stripped, big screenshots downscaled to JPEG, original bytes used if decoding fails.
+async function encodeImage(file){
+const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error||new Error('FileReader failed'));r.readAsDataURL(file)});
+const rawBase64=String(dataUrl),base64Data=rawBase64.replace(/^data:[^,]*;base64,/,'');
+try{
+const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('browser could not decode this image'));i.src=rawBase64});
+const k=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+return{mimeType:'image/jpeg',data:c.toDataURL('image/jpeg',.85).replace(/^data:image\/\w+;base64,/,'')};
+}catch(e){
+console.error('[scan] canvas re-encode failed, sending original bytes instead:',e);
+const t=file.type==='image/jpg'?'image/jpeg':(file.type||'');
+if(/^image\/(png|jpeg|webp|heic|heif)$/.test(t))return{mimeType:t,data:base64Data};
+throw new Error(`unsupported image type "${t||'unknown'}" — use PNG or JPEG`);
+}
+}
+async function onFile(f){
+if(!f)return;
+if(!/^image\//.test(f.type)){toast('IMAGE FILES ONLY');return}
+if(!K||!key()){await scan([]);return} // shows the right warning without encoding
+dz('J.A.R.V.I.S. ENCODING IMAGE...',1);
+try{const {mimeType,data}=await encodeImage(f);await scan([{inlineData:{mimeType,data}}])}
+catch(e){dzErr(e)}
+}
+$('file').onchange=e=>{const f=e.target.files[0];e.target.value='';onFile(f)};
+const dzEl=$('drop');
+['dragenter','dragover'].forEach(ev=>dzEl.addEventListener(ev,e=>{e.preventDefault();dzEl.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>dzEl.addEventListener(ev,e=>{e.preventDefault();dzEl.classList.remove('over');if(ev==='drop')onFile(e.dataTransfer&&e.dataTransfer.files[0])}));
+['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault())); // stop the browser opening dropped files
+/* ---------- Study (stopwatch + retroactive edit + subject tags) ---------- */
+const sess=d=>S.study[d]||[];
+const studyMin=d=>Math.round(sess(d).reduce((a,s)=>a+(s.e-s.s),0)/6e4);
+const runMin=()=>S.run?Math.floor((Date.now()-S.run)/6e4):0;
+const clk=ms=>{const s=Math.floor(ms/1e3);return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`};
+const subjList=()=>{const c={};Object.values(S.study).forEach(a=>a.forEach(s=>{if(s.subj)c[s.subj]=(c[s.subj]||0)+1}));return Object.keys(c).sort((a,b)=>c[b]-c[a]).slice(0,6)};
+function addSess(s,e,subj){if(e<=s){toast('END MUST BE AFTER START');return}const d=dk(new Date(s)),o={id:uid(),s,e};subj=String(subj||'').trim().slice(0,40);if(subj)o.subj=subj;(S.study[d]=S.study[d]||[]).push(o);save()}
+function studyModal(){modal('STUDY CHRONOMETER',()=>{
+const T=today(),st=h('input',{type:'time'}),en=h('input',{type:'time'}),mn=h('input',{type:'text',inputmode:'numeric',placeholder:'Total minutes'});
+const sb=h('input',{type:'text',placeholder:'Subject (optional), e.g. Physics',maxlength:'40',value:S.runSubj||''}),subs=subjList(),tg=TG();
+sb.oninput=()=>{S.runSubj=sb.value.trim().slice(0,40)};
+return h('div',{},
+h('div',{class:'big',id:'stm'},S.run?clk(Date.now()-S.run):'00:00:00'),
+sb,
+subs.length?h('div',{class:'seg'},subs.map(x=>h('button',{class:'btn',onclick:()=>{sb.value=x;S.runSubj=x}},raw(x)))):'',
+h('div',{class:'row'},h('button',{class:'btn '+(S.run?'rd':''),onclick:()=>{hap();if(S.run){const r=S.run;S.run=null;addSess(r,Date.now(),S.runSubj)}else{S.run=Date.now();save()}}},S.run?'STOP SESSION':'START SESSION')),
+h('div',{class:'sub',style:'margin-top:16px'},'RETROACTIVE ENTRY (forgot to start?)'),
+h('div',{class:'row'},h('label',{class:'mu'},'Start',st),h('label',{class:'mu'},'End',en)),
+h('div',{class:'row'},mn,h('button',{class:'btn am',onclick:()=>{
+const m=num(mn.value);let s,e;
+if(st.value&&en.value){s=tsOf(T,st.value);e=tsOf(T,en.value)}
+else if(m>0&&st.value){s=tsOf(T,st.value);e=s+m*6e4}
+else if(m>0&&en.value){e=tsOf(T,en.value);s=e-m*6e4}
+else if(m>0){e=Date.now();s=e-m*6e4}else{toast('ENTER START+END OR MINUTES');return}
+addSess(s,e,sb.value)}},'LOG SESSION')),
+h('div',{class:'sub',style:'margin-top:16px'},`TODAY: ${studyMin(T)} MIN`+(tg.study>0?` / GOAL ${tg.study}`:'')),
+tg.study>0?pbar((studyMin(T)+runMin())/tg.study):'',
+sess(T).map(x=>{const a=h('input',{type:'time',value:tt(x.s)}),b=h('input',{type:'time',value:tt(x.e)});
+return h('div',{class:'li'},a,b,x.subj?h('span',{class:'mu',style:'font-size:11px;flex:none;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},raw(x.subj)):'',
+h('button',{class:'btn',onclick:()=>{const d=dk(new Date(x.s)),s=tsOf(d,a.value),e=tsOf(d,b.value);if(e<=s){toast('END MUST BE AFTER START');return}x.s=s;x.e=e;save();toast('SESSION UPDATED')}},'SAVE'),
+h('button',{class:'btn rd',onclick:()=>{S.study[T]=sess(T).filter(y=>y.id!==x.id);save()}},'DEL'))}))})}
+/* ---------- Weight (exact decimals) ---------- */
+function weightModal(){modal('MASS TELEMETRY',()=>{
+const T=today(),inp=h('input',{type:'text',inputmode:'decimal',placeholder:'60.45',value:S.weight[T]??''});
+const base=()=>{const v=num(inp.value);if(v!==null)return v;const ks=Object.keys(S.weight).sort();return ks.length?S.weight[ks[ks.length-1]]:null};
+const set=v=>{S.weight[T]=v;save()};
+return h('div',{},h('div',{class:'big'},S.weight[T]!=null?S.weight[T]+' kg':'-- kg'),inp,
+h('div',{class:'row'},[-0.5,-0.1,-0.05,0.05,0.1,0.5].map(d=>h('button',{class:'btn',onclick:()=>{hap();const b=base();if(b===null){toast('ENTER A WEIGHT FIRST');return}set(Number((b+d).toFixed(2)))}},(d>0?'+':'')+d))),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const v=num(inp.value);if(v===null||v<20||v>400){toast('INVALID MASS VALUE');return}set(v)}},'COMMIT')),
+h('div',{class:'sub',style:'margin-top:16px'},'TREND · LAST 30 ENTRIES'),spark(Object.keys(S.weight).sort().slice(-30).map(d=>S.weight[d])),
+Object.keys(S.weight).sort().slice(-7).reverse().map(d=>h('div',{class:'li'},h('span',{class:'mu'},d),h('span',{},S.weight[d]+' kg'))))})}
+/* ---------- Sleep / Steps ---------- */
+function simpleModal(title,fields,get,put){modal(title,()=>{const cur=get()||{},ins=fields.map(f=>h('input',{type:'text',placeholder:f[1],value:cur[f[0]]??'',inputmode:f[2]?'decimal':'text'}));
+return h('div',{},ins.map(i=>h('div',{class:'row'},i)),h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const o={};fields.forEach((f,i)=>o[f[0]]=f[2]?(num(ins[i].value)??0):ins[i].value);put(o);save();toast('LOGGED')}},'COMMIT')))})}
+const sleepModal=()=>simpleModal('SLEEP DIAGNOSTICS',[['h','Sleep duration (hours)',1],['q','Quality breakdown (deep / REM / awake…)']],()=>S.sleep[today()],o=>S.sleep[today()]=o);
+const stepsModal=()=>simpleModal('ACTIVITY MATRIX',[['n','Total steps',1],['kcal','Active calories (kcal)',1]],()=>S.steps[today()],o=>S.steps[today()]=o);
+/* ---------- Refuel (macros vs daily targets) ---------- */
+const TG=()=>({...blank().targets,...S.targets});
+function refuelModal(){modal('REFUEL TERMINAL',()=>{
+const T=today(),L=S.refuel[T]||[],tg=TG(),sum=k=>L.reduce((a,x)=>a+(x[k]||0),0);
+const M=[['kcal','Calories','kcal'],['pro','Protein','g'],['carb','Carbs','g'],['fat','Fat','g'],['caf','Caffeine','mg']];
+const f=['Food item','Quantity (g)','kcal','Protein g','Carbs g','Fat g','Caffeine mg'].map((p,i)=>h('input',{type:'text',placeholder:p,inputmode:i>1?'decimal':'text'}));
+return h('div',{},
+M.map(([k,l,u])=>{const used=Math.round(sum(k)),left=Math.round(tg[k]-used);
+return h('div',{class:'li'},h('span',{},l),h('span',{class:left<0?'fx-crit':'',style:'color:'+(left<0?'var(--rd)':'var(--cy)')},`${used} / ${tg[k]} ${u} · ${left>=0?left+' left':(-left)+' over'}`))}),
+h('div',{class:'row'},f[0],f[1]),h('div',{class:'row'},f[2],f[3]),h('div',{class:'row'},f[4],f[5],f[6]),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{if(!f[0].value.trim()){toast('FOOD ITEM REQUIRED');return}
+(S.refuel[T]=S.refuel[T]||[]).push({id:uid(),name:f[0].value.trim(),qty:f[1].value.trim(),kcal:num(f[2].value)||0,pro:num(f[3].value)||0,carb:num(f[4].value)||0,fat:num(f[5].value)||0,caf:num(f[6].value)||0});save()}},'ADD')),
+L.map(x=>h('div',{class:'li'},h('span',{},`${x.name} ${x.qty?'('+x.qty+')':''}`),h('span',{class:'mu',style:'font-size:12px'},`${x.kcal} kcal · P${x.pro} C${x.carb||0} F${x.fat||0}${x.caf?' · '+x.caf+'mg':''}`),
+h('button',{class:'btn rd',onclick:()=>{S.refuel[T]=L.filter(y=>y.id!==x.id);save()}},'DEL'))))})}
+/* ---------- LaTeX -> readable Unicode math (offline; no external renderer needed) ---------- */
+const GK={alpha:'α',beta:'β',gamma:'γ',delta:'δ',Delta:'Δ',epsilon:'ε',theta:'θ',lambda:'λ',mu:'μ',pi:'π',rho:'ρ',sigma:'σ',Sigma:'Σ',tau:'τ',phi:'φ',Phi:'Φ',omega:'ω',Omega:'Ω',eta:'η',cdot:'·',times:'×',approx:'≈',neq:'≠',leq:'≤',geq:'≥',le:'≤',ge:'≥',pm:'±',to:'→',rightarrow:'→',Rightarrow:'⇒',infty:'∞',circ:'°',degree:'°',partial:'∂',nabla:'∇',int:'∫',sum:'Σ',therefore:'∴',vec:'',sin:'sin',cos:'cos',tan:'tan',ln:'ln',log:'log'};
+const SUPM='0123456789+-=()ni',SUPC='⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ',SUBM='0123456789+-=()aeoxint',SUBC='₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓᵢₙₜ';
+const conv=(s,from,to,pre)=>{let o='';for(const c of s){const i=from.indexOf(c);if(i<0)return pre+'('+s+')';o+=to[i]}return o};
+function tex2txt(s){
+s=String(s||'').replace(/\^\{?\\circ\}?/g,'°').replace(/\\(?:left|right|displaystyle|!)/g,'').replace(/\\(?:quad|qquad|,|;|:)/g,' ').replace(/\\(?:text|mathrm|mathbf|textbf|operatorname)\{([^{}]*)\}/g,'$1');
+const FR={'1/2':'½','1/3':'⅓','2/3':'⅔','1/4':'¼','3/4':'¾'},w=x=>/^[\w.]+$/.test(x)?x:'('+x+')';
+for(let i=0;i<8;i++){const p=s;
+s=s.replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g,(m,a,b)=>FR[a+'/'+b]||(w(a)+'/'+w(b)))
+.replace(/\\sqrt\{([^{}]*)\}/g,(m,a)=>'√'+w(a))
+.replace(/\^\{([^{}]*)\}/g,(m,a)=>conv(a,SUPM,SUPC,'^')).replace(/_\{([^{}]*)\}/g,(m,a)=>conv(a,SUBM,SUBC,'_'))
+.replace(/\^([0-9a-zA-Z+-])/g,(m,a)=>conv(a,SUPM,SUPC,'^')).replace(/_([0-9a-zA-Z])/g,(m,a)=>conv(a,SUBM,SUBC,'_'));
+if(s===p)break}
+return s.replace(/\\\\/g,'\n').replace(/\\([a-zA-Z]+)/g,(m,k)=>k in GK?GK[k]:k).replace(/[{}]/g,'').replace(/[ \t]{2,}/g,' ').trim();
+}
+/* ---------- Academic terminal (physics / math solutions in LaTeX) ---------- */
+function acadDetail(x){modal('SOLUTION LOG',()=>{
+const raws=[],R=t=>{const e=h('div',{class:'raw',style:'display:none'},t);raws.push(e);return e};
+const ans=typeof x.answer==='string'?x.answer:'';
+const steps=x.steps.map((s,i)=>{const o=typeof s==='string'?{label:'',tex:s}:s;return h('div',{class:'msg'},h('div',{class:'sub'},`STEP ${i+1}${o.label?' · '+o.label:''}`),h('div',{class:'tex'},tex2txt(o.tex)),R(o.tex))});
+return h('div',{},h('div',{class:'sub'},x.subject+' · '+x.date),h('div',{class:'msg'},h('div',{class:'tex'},tex2txt(x.problem)),R(x.problem)),steps,
+h('div',{class:'msg',style:'border-color:var(--am)'},h('div',{class:'sub'},'ANSWER'),h('div',{class:'tex',style:'color:var(--am)'},tex2txt(ans)||'—'),R(ans)),
+h('div',{class:'row'},h('button',{class:'btn',onclick:acadModal},'BACK'),
+h('button',{class:'btn',onclick:e=>{const show=raws[0]&&raws[0].style.display==='none';raws.forEach(r=>r.style.display=show?'block':'none');e.target.textContent=show?'HIDE LaTeX':'SHOW LaTeX'}},'SHOW LaTeX'),
+h('button',{class:'btn rd',onclick:()=>{S.acad=S.acad.filter(y=>y.id!==x.id);save();acadModal()}},'DELETE')))},false)}
+function acadModal(){modal('ACADEMIC TERMINAL',()=>{
+const ta=h('textarea',{rows:3,placeholder:'Type a physics or math problem — or drop a screenshot on the scan terminal'});
+return h('div',{},ta,h('div',{class:'row'},h('button',{class:'btn am',onclick:async()=>{if(!ta.value.trim())return;await scan([{text:'Solve this physics or math problem step by step (LaTeX steps) and route it to academics:\n'+ta.value}],'PROBLEM');ta.value=''}},'SOLVE & LOG')),
+S.acad.map(x=>h('button',{class:'li',style:'width:100%;text-align:left',onclick:()=>acadDetail(x)},h('span',{},`${x.subject} — ${tex2txt(x.problem).slice(0,56)}`),h('span',{class:'mu'},x.date))))})}
+/* ---------- Push-up volume ---------- */
+const puList=d=>S.pushups[d]||[],puTotal=d=>puList(d).reduce((a,x)=>a+x.n,0);
+function addPU(n){const T=today();(S.pushups[T]=S.pushups[T]||[]).push({id:uid(),t:Date.now(),n});save();snd('ok');hap();toast(`+${n} PUSH-UPS · TOTAL ${puTotal(T)}`)}
+function pushupModal(){modal('PUSH-UP VOLUME',()=>{
+const T=today(),c=h('input',{type:'text',inputmode:'numeric',placeholder:'Custom reps'});
+const wk=[...Array(7)].map((_,i)=>{const d=new Date();d.setDate(d.getDate()-6+i);return dk(d)});
+return h('div',{},h('div',{class:'big'},puTotal(T)+' REPS'),
+h('div',{class:'row'},[10,20,25].map(n=>h('button',{class:'btn am',style:'flex:1;min-height:56px;font-size:16px',onclick:()=>addPU(n)},'+'+n))),
+h('div',{class:'row'},c,h('button',{class:'btn',onclick:()=>{const n=Math.round(num(c.value));if(!(n>0&&n<=1000)){toast('ENTER 1–1000');return}addPU(n)}},'ADD')),
+h('div',{class:'sub',style:'margin-top:14px'},`TODAY · ${puList(T).length} SETS`),
+puList(T).slice().reverse().map(x=>h('div',{class:'li'},h('span',{},tt(x.t)),h('span',{},'+'+x.n),h('button',{class:'btn rd',onclick:()=>{S.pushups[T]=puList(T).filter(y=>y.id!==x.id);save()}},'DEL'))),
+h('div',{class:'sub',style:'margin-top:14px'},'LAST 7 DAYS'),
+wk.map(d=>h('div',{class:'li'},h('span',{class:'mu'},d),h('span',{},puTotal(d)+' reps'))))})}
+/* ---------- Chat terminal (text-to-text, gemini-3.5-flash-lite) ---------- */
+let tchat=[];
+function chatModal(){modal('CHAT TERMINAL // '+MODELS[0].toUpperCase(),()=>{
+const log=h('div',{}),inp=h('input',{type:'text',placeholder:'Ask anything: Q&A, analysis, explanations…',enterkeyhint:'send'});
+const add=(c,t)=>{const e=h('div',{class:'msg '+(c||'')},t);log.append(e);log.scrollTop=log.scrollHeight;return e};
+tchat.forEach(m=>add(m.role==='user'?'u':'',m.parts[0].text));
+if(!tchat.length)add('','Chat terminal online. Ask me anything, sir.');
+const go=async()=>{const q=inp.value.trim();if(!q)return;inp.value='';add('u',q);const wait=add('mu','…');
+try{const sys=`You are J.A.R.V.I.S., a precise, dry-witted assistant. Answer clearly and concisely in English; use plain text. Today's telemetry: ${ctx()}`;
+const r=await gem([{text:q}],false,[{role:'user',parts:[{text:sys}]},{role:'model',parts:[{text:'Understood.'}]},...tchat.slice(-12)]);
+tchat.push({role:'user',parts:[{text:q}]},{role:'model',parts:[{text:r}]});wait.className='msg';typeText(wait,r,{onTick:()=>{log.scrollTop=log.scrollHeight}});speak(r)}
+catch(e){snd('warn');wait.className='msg';wait.textContent='Systems fault: '+e.message}};
+inp.onkeydown=e=>{if(e.key==='Enter')go()};
+return h('div',{},h('div',{class:'row'},tglVoice(),h('button',{class:'btn rd',onclick:()=>{tchat=[];chatModal()}},'CLEAR')),log,h('div',{class:'row'},inp,h('button',{class:'btn',onclick:go},'SEND')))},false)}
+/* ---------- Homework ---------- */
+function hwDetail(x0){modal('MISSION BRIEFING',()=>{const x=S.hw.find(z=>z.id===x0.id)||x0,live=()=>S.hw.find(z=>z.id===x0.id),gone=()=>{toast('THIS ITEM NO LONGER EXISTS');hwModal()},dd=h('input',{type:'date',value:x.due||''});return h('div',{},h('div',{class:'sub'},raw(x.subj)),h('div',{style:'font-size:18px;color:var(--cy);margin:6px 0'},raw(x.title)),h('div',{class:'msg'},x.desc?raw(x.desc):'No description.'),h('div',{class:'mu',style:'margin-top:8px'},'Due: '+(x.due||'unspecified')+(!x.done&&x.due&&x.due<today()?' · OVERDUE':'')),
+h('div',{class:'row'},dd,h('button',{class:'btn',onclick:()=>{const y=live();if(!y)return gone();y.due=dd.value;save();toast(y.due?'DUE DATE UPDATED':'DUE DATE CLEARED');hwDetail(y)}},'SAVE DATE')),
+h('div',{class:'row'},h('button',{class:'btn',onclick:hwModal},'BACK'),h('button',{class:'btn am',onclick:()=>{const y=live();if(!y)return gone();y.done=y.done?0:1;if(y.done)y.doneAt=Date.now();else delete y.doneAt;save();hwModal()}},x.done?'REOPEN':'MARK COMPLETE'),h('button',{class:'btn rd',onclick:()=>{S.hw=S.hw.filter(y=>y.id!==x0.id);save();hwModal()}},'DELETE')))},false)}
+function hwModal(){modal('HOMEWORK QUEUE',()=>{
+const T=today(),f=['Subject','Title','Description'].map(p=>h('input',{type:'text',placeholder:p})),d=h('input',{type:'date'});
+return h('div',{},f.map(i=>h('div',{class:'row'},i)),h('div',{class:'row'},d,h('button',{class:'btn am',onclick:()=>{if(!f[1].value.trim()){toast('TITLE REQUIRED');return}S.hw.unshift({id:uid(),subj:f[0].value.trim()||'General',title:f[1].value.trim(),desc:f[2].value.trim(),due:d.value,done:0});save()}},'ADD')),
+[...S.hw].sort((a,b)=>a.done-b.done||(a.due||'9').localeCompare(b.due||'9')).map(x=>{const od=!x.done&&x.due&&x.due<T;
+return h('button',{class:'li',style:'width:100%;text-align:left;opacity:'+(x.done?.45:1),onclick:()=>hwDetail(x)},h('span',{},raw(`${x.done?'✓ ':''}${x.subj} — ${x.title}`)),h('span',{class:od?'lv-crit':'mu'},(od?'OVERDUE ':'')+(x.due||'')))}))})}
+/* ---------- Gym log + Strength recap ---------- */
+const SR=/(\d+(?:[.,]\d+)?)\s*(?:kg|kilo)?\s*(?:[x×*@]|for)\s*(\d+)|(\d+)\s*reps?\b/gi;
+function pw(raw){const o=[];raw.split(/\n/).forEach(l=>{l=l.replace(/\s*[(\[][^)\]]*[)\]]/g,' ').trim();const m=[...l.matchAll(SR)];if(!m.length)return;
+const n=l.slice(0,m[0].index).replace(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|set)\b[:\s-]*/gi,' ').replace(/\s+/g,' ').replace(/^[\s\-–•*]+|[\s:,\-–]+$/g,'');
+o.push({ex:n||'Exercise',sets:m.map(x=>x[1]!=null?[parseFloat(x[1].replace(',','.')),+x[2]]:[0,+x[3]])})});return o}
+const fm=s=>s[0]?`${s[0]} kg × ${s[1]}`:`BW × ${s[1]}`;
+const topSet=sets=>sets.reduce((a,s)=>s[0]>a[0]||(s[0]===a[0]&&s[1]>a[1])?s:a,[-1,0]);
+function gymModal(){modal('HYPERTROPHY LOG',()=>{const T=today(),ta=h('textarea',{rows:7,placeholder:'Paste workout notes… e.g. leg press first 140kgx10 second 160kgx8',value:(S.gym[T]||[]).map(e=>e.ex+' '+e.sets.map(s=>s[0]?s[0]+'kgx'+s[1]:s[1]+' reps').join(' ')).join('\n')});
+return h('div',{},ta,h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const p=pw(ta.value);if(p.length)S.gym[T]=p;else delete S.gym[T];save();toast(p.length?`${p.length} EXERCISES LOGGED`:'LOG CLEARED')}},'COMMIT'),h('button',{class:'btn',onclick:recapModal},'WEEKLY RECAP')),
+(S.gym[T]||[]).map(e=>h('div',{class:'li'},h('span',{},e.ex),h('span',{class:'mu'},e.sets.map(fm).join(' · ')))))})}
+function recapModal(){modal('WEEKLY STRENGTH & HYPERTROPHY RECAP',()=>{
+const n=new Date(),ws=dk(new Date(n.getFullYear(),n.getMonth(),n.getDate()-((n.getDay()+6)%7))),by={};
+Object.keys(S.gym).sort().forEach(d=>S.gym[d].forEach(e=>{const k=e.ex.toLowerCase();(by[k]=by[k]||[]).push({d,name:e.ex,t:topSet(e.sets)})}));
+const rows=Object.values(by).filter(a=>a[a.length-1].d>=ws).map(a=>{const l=a[a.length-1],p=a[a.length-2];return h('div',{class:'li'},h('span',{},l.name),h('span',{style:'color:var(--cy)'},(p?fm(p.t)+' ➔ ':'')+fm(l.t)))});
+return h('div',{},h('div',{class:'sub'},'TOP SET PER EXERCISE · PREVIOUS ➔ LATEST'),rows.length?rows:h('div',{class:'mu',style:'margin-top:10px'},'No workouts logged this week.'))})}
+/* ---------- Academic diagnostics ---------- */
+function examStats(){const a={};let c=0,w=0;S.exams.forEach(e=>e.topics.forEach(t=>{const k=(e.subject+' / '+t.t);a[k]=a[k]||{c:0,w:0};a[k].c+=t.c;a[k].w+=t.w;c+=t.c;w+=t.w}));
+return{overall:c+w?Math.round(c/(c+w)*100):null,rows:Object.entries(a).map(([k,v])=>({k,acc:v.c+v.w?Math.round(v.c/(v.c+v.w)*100):0,n:v.c+v.w})).sort((x,y)=>x.acc-y.acc)}}
+// Net score the way YKS counts it: correct minus a quarter of the wrong answers.
+const examNet=e=>{const c=e.topics.reduce((a,t)=>a+t.c,0),w=e.topics.reduce((a,t)=>a+t.w,0);return c+w?Math.round((c-w/4)*100)/100:null};
+function examModal(){modal('ACADEMIC DIAGNOSTICS // 11TH GRADE',()=>{
+const st=examStats(),ta=h('textarea',{rows:4,placeholder:'Paste practice-exam results as text (or use the scan terminal for screenshots)'}),out=h('pre',{class:'msg',style:'display:none'});
+const nets=[...S.exams].reverse().map(examNet);
+return h('div',{},h('div',{class:'big'},st.overall!=null?st.overall+'% ACCURACY':'NO DATA'),
+st.rows.slice(0,12).map(r=>h('div',{class:'li'},h('span',{},raw(r.k)),h('span',{style:'color:'+(r.acc<60?'var(--rd)':r.acc<80?'var(--am)':'var(--cy)')},`${r.acc}% (${r.n}q)`))),
+ta,h('div',{class:'row'},h('button',{class:'btn',onclick:async()=>{if(!ta.value.trim())return;await scan([{text:'Exam results text:\n'+ta.value}],'INPUT');ta.value=''}},'PARSE TEXT'),
+h('button',{class:'btn am',onclick:async()=>{if(!st.rows.length){toast('NO EXAM DATA YET');return}out.style.display='block';out.textContent='ANALYZING…';
+try{out.textContent=await gem([{text:`You are J.A.R.V.I.S., academic strategist for an 11th grade student. Exam stats (topic accuracy, weakest first): ${JSON.stringify(st.rows.slice(0,15))}. Overall ${st.overall}%. Identify the top vulnerabilities, then give a concrete 7-day study roadmap (daily focus + task + minutes). Plain text, concise, English.`}])}catch(e){out.textContent='ERROR: '+e.message}}},'GENERATE ROADMAP')),out,
+S.exams.length?h('div',{class:'sub',style:'margin-top:16px'},'NET TREND · CORRECT − WRONG ÷ 4'):'',
+S.exams.length?spark(nets):'',
+S.exams.length?h('div',{class:'sub',style:'margin-top:16px'},`EXAM HISTORY · ${S.exams.length}`):'',
+S.exams.map(e=>{const n=examNet(e);return h('div',{class:'li'},h('span',{},raw(e.subject),h('span',{class:'mu',style:'font-size:11px'},'  '+e.date)),h('span',{class:'mu',style:'font-size:12px'},`${e.score}/${e.total}`+(n!=null?` · net ${n}`:'')),
+h('button',{class:'btn rd',onclick:()=>{if(confirm('Delete this exam result?')){S.exams=S.exams.filter(y=>y.id!==e.id);save();examModal()}}},'DEL'))}))},false)}
+/* ---------- J.A.R.V.I.S. command terminal (chat + whitelisted system actions + voice) ---------- */
+let chat=[];
+const MODS={study:()=>studyModal(),weight:()=>weightModal(),refuel:()=>refuelModal(),homework:()=>hwModal(),academics:()=>acadModal(),exams:()=>examModal(),strength:()=>recapModal(),pushups:()=>pushupModal(),chat:()=>chatModal(),
+habits:()=>habitModal(),missions:()=>taskModal(),backfill:()=>backfillModal(),journal:()=>journalModal(),countdown:()=>evModal(),mistakes:()=>mkModal(),weekly:()=>weekModal(),briefing:()=>briefModal(),alerts:()=>remModal(),schedule:()=>ttModal(),sleep:()=>sleepModal(),steps:()=>stepsModal(),gym:()=>gymModal(),settings:()=>settingsModal()};
+const JP=`You are J.A.R.V.I.S. from Stark Industries: precise, dry-witted, concise. The user may type or speak Turkish or English; understand both and always reply in English. Reply ONLY JSON: {"reply":"text","actions":[]}.
+Allowed actions (use only when the user clearly asks to change data, otherwise actions must be []):
+{"type":"add_homework","subject":"","title":"","description":"","due":"YYYY-MM-DD"}
+{"type":"log_weight","kg":60.45}
+{"type":"add_food","name":"","qty":"","kcal":0,"protein":0,"carbs":0,"fat":0,"caffeine":0}
+{"type":"start_study"} {"type":"stop_study"} {"type":"log_study","minutes":45,"subject":""}
+{"type":"set_targets","kcal":0,"protein":0,"carbs":0,"fat":0,"caffeine":0}
+{"type":"add_pushups","reps":20}
+{"type":"log_sleep","hours":7.5} {"type":"log_steps","steps":8000}
+{"type":"toggle_habit","name":"exact habit name from context","count":1}
+{"type":"add_reminder","time":"HH:MM","text":""}
+{"type":"add_event","name":"exam or mission name","date":"YYYY-MM-DD"}
+{"type":"log_mood","mood":3,"note":""}
+{"type":"add_task","text":"","when":"today|tomorrow"}
+{"type":"add_mistake","subject":"","topic":"","question":"","solution":"","why":""}
+{"type":"open","module":"study|weight|refuel|homework|academics|exams|strength|pushups|chat|habits|missions|journal|countdown|mistakes|weekly|briefing|alerts|schedule|sleep|steps|gym|backfill|settings"}`;
+const okDate=d=>typeof d==='string'&&/^\d{4}-\d\d-\d\d$/.test(d)&&!isNaN(new Date(d+'T12:00:00'))&&dk(new Date(d+'T12:00:00'))===d; // a real calendar day
+function act(a){
+if(!a||typeof a!=='object')return null;
+const T=today(),n=x=>Number(x)||0,str=(x,m=200)=>String(x??'').slice(0,m);
+switch(a.type){
+case'add_homework':S.hw.unshift({id:uid(),subj:str(a.subject||'General',60),title:str(a.title||'Task'),desc:str(a.description,1000),due:okDate(a.due)?a.due:'',done:0});return'HOMEWORK QUEUED: '+str(a.title,60);
+case'log_weight':{const k=n(a.kg);if(k<20||k>400)return null;S.weight[T]=k;return`MASS LOGGED: ${k} kg`}
+case'add_food':(S.refuel[T]=S.refuel[T]||[]).push({id:uid(),name:str(a.name||'Item',80),qty:str(a.qty,40),kcal:n(a.kcal),pro:n(a.protein),carb:n(a.carbs),fat:n(a.fat),caf:n(a.caffeine)});return'FUEL LOGGED: '+str(a.name,60);
+case'start_study':if(S.run)return null;S.run=Date.now();return'CHRONOMETER STARTED';
+case'stop_study':{if(!S.run)return null;const r=S.run;S.run=null;addSess(r,Date.now(),S.runSubj);return'CHRONOMETER STOPPED'}
+case'log_study':{const m=n(a.minutes);if(m<=0||m>720)return null;addSess(Date.now()-m*6e4,Date.now(),a.subject);return`STUDY SESSION LOGGED: ${m} min`}
+case'set_targets':{const g=(v,d,mx)=>{v=n(v);return v>0&&v<=mx?v:d},t=TG();S.targets={...t,kcal:g(a.kcal,t.kcal,10000),pro:g(a.protein,t.pro,600),carb:g(a.carbs,t.carb,1500),fat:g(a.fat,t.fat,600),caf:g(a.caffeine,t.caf,2000)};return'DAILY TARGETS UPDATED'}
+case'add_pushups':{const r=Math.round(n(a.reps));if(r<=0||r>1000)return null;(S.pushups[T]=S.pushups[T]||[]).push({id:uid(),t:Date.now(),n:r});return`PUSH-UPS LOGGED: ${r}`}
+case'log_sleep':{const hh=n(a.hours);if(hh<=0||hh>24)return null;S.sleep[T]={h:hh,q:(S.sleep[T]||{}).q||''};return`SLEEP LOGGED: ${hh} h`}
+case'log_steps':{const st=Math.round(n(a.steps));if(st<=0||st>200000)return null;S.steps[T]={n:st,kcal:(S.steps[T]||{}).kcal||0};return`STEPS LOGGED: ${st}`}
+case'toggle_habit':{const nm=str(a.name,60).trim().toLocaleLowerCase('tr');if(nm.length<2)return null;const hs=habitsOn(T),lc=y=>y.name.toLocaleLowerCase('tr'),near=hs.filter(y=>nm.length>=3&&(lc(y).includes(nm)||nm.includes(lc(y))));
+const x=hs.find(y=>lc(y)===nm)||(near.length===1?near[0]:null);if(!x)return null; // exact name, or the only close match
+
+habSet(x,T,(x.target||1)>1?habCount(x,T)+Math.max(1,Math.round(n(a.count))):1);return'HABIT LOGGED: '+x.name}
+case'add_reminder':{if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(a.time||'')||!str(a.text).trim())return null;const id=uid();S.reminders.push({id,time:a.time,text:str(a.text,120).trim(),days:[],on:1});remSkipToday(id,a.time);return`ALERT SET: ${a.time} ${str(a.text,40)}`}
+case'add_event':{if(!okDate(a.date)||!str(a.name).trim())return null;S.events.push({id:uid(),name:str(a.name,60).trim(),date:a.date,topics:[]});return'COUNTDOWN SET: '+str(a.name,60)}
+case'log_mood':{const m=Math.round(n(a.mood));if(m<1||m>5)return null;const j=S.journal[T]||{};S.journal[T]={mood:m,note:str(a.note||j.note,2000)};return`MOOD LOGGED: ${m}/5`}
+case'add_task':{const t=str(a.text,140).trim();if(!t||S.tasks.length>=400)return null;S.tasks.push({id:uid(),t,d:a.when==='tomorrow'?addDays(T,1):T,done:0});return'MISSION ADDED: '+t.slice(0,60)}
+case'add_mistake':{if(!str(a.question).trim()&&!str(a.topic).trim())return null;S.mistakes.unshift({id:uid(),date:T,subject:str(a.subject||'General',60),topic:str(a.topic,80),q:str(a.question,1500),sol:str(a.solution,3000),why:str(a.why,300),stage:0,due:addDays(T,SRS[0]),reps:0,lapses:0});return'ERROR LOGGED: '+str(a.topic||a.subject,60)}
+case'open':if(Object.prototype.hasOwnProperty.call(MODS,a.module)){setTimeout(MODS[a.module],0);return'OPENING '+String(a.module).toUpperCase()}return null;
+}
+return null;
+}
+/* Offline command parser: common Turkish / English phrases run without the AI link. Returns executed lines or null. */
+/* Offline command parser: short, unambiguous Turkish / English phrases run without the AI link. */
+const OPENK=[[/haftal[ıi]k|weekly/,'weekly'],[/g[öo]rev|mission|task|todo/,'missions'],[/d[üu]n[üu]?\s|ge[çc]mi[şs]|past day|back-?fill/,'backfill'],[/brif|briefing/,'briefing'],[/al[ıi][şs]kanl[ıi]k|habit/,'habits'],[/hata defter|error log|mistake/,'mistakes'],[/geri say[ıi]m|countdown/,'countdown'],[/hat[ıi]rlat|alert|reminder/,'alerts'],[/[öo]dev|homework/,'homework'],[/ders program|schedule/,'schedule'],[/ayar|setting/,'settings'],[/günl[üu]k|journal|mission log/,'journal']];
+const DONEW=['','yaptım','yaptim','tamam','tamamladım','içtim','ictim','bitti','bitirdim','okudum','done','did it','finished','check'];
+function parseCmd(part){ // one short phrase -> one action, or null when it is not clearly a command
+const T=today(),P=s=>{let m;
+if((m=s.match(/^(?:bugün\s+)?(?:add\s+|log\s+)?(\d{1,4})\s*(?:tane\s+)?(?:şınav|push[- ]?ups?)(?:\s+(?:çektim|yaptım|done|did))?$/)))return{type:'add_pushups',reps:+m[1]};
+if((m=s.match(/^(?:bugün\s+|log\s+)?(?:kilom?|ağırlığım|ağırlık|weight)\s*[:=]?\s*(\d{2,3}(?:\.\d+)?)\s*(?:kg|kilo)?$/))||(m=s.match(/^(\d{2,3}(?:\.\d+)?)\s*(?:kg|kilo)$/)))return{type:'log_weight',kg:+m[1]};
+if((m=s.match(/^(?:bugün\s+|dün gece\s+)?(\d{1,2}(?:\.\d+)?)\s*saat\s+uyudum$/))||(m=s.match(/^(?:i\s+)?slept\s+(?:for\s+)?(\d{1,2}(?:\.\d+)?)\s*(?:h|hours?)?$/)))return{type:'log_sleep',hours:+m[1]};
+if((m=s.match(/^(?:bugün\s+)?(\d[\d.]{2,7})\s*(?:adım|steps?)(?:\s+(?:attım|yürüdüm|walked|today))?$/)))return{type:'log_steps',steps:+m[1].replace(/\./g,'')};
+if((m=s.match(/^(?:bugün\s+)?(\d{1,3})\s*(?:dakika|dk|min(?:utes?)?)\s+(?:ders(?:\s+çalıştım)?|çalıştım|studied|study)$/))||(m=s.match(/^(?:i\s+)?studied\s+(?:for\s+)?(\d{1,3})\s*min(?:utes?)?$/)))return{type:'log_study',minutes:+m[1]};
+if(/^(?:çalışmaya\s+başla|dersi?\s+başlat|kronometreyi\s+başlat|start\s+(?:the\s+)?(?:study|timer))$/.test(s))return{type:'start_study'};
+if(/^(?:çalışmayı\s+(?:bitir|durdur)|dersi?\s+bitir|kronometreyi\s+durdur|stop\s+(?:the\s+)?(?:study|timer))$/.test(s))return{type:'stop_study'};
+if((m=s.match(/^(.{2,40}?)\s+(?:aç|göster)$/))||(m=s.match(/^(?:open|show)\s+(?:the\s+)?(.{2,40})$/))){const k=OPENK.find(x=>x[0].test(m[1]));return k?{type:'open',module:k[1]}:null}
+if((m=s.match(/^(yarın(?:a)?\s+)?(?:görev ekle|add (?:a )?(?:task|mission)|todo)\s*[:\-]?\s+(.{2,})$/)))return{type:'add_task',text:part.slice(part.length-m[2].length),when:m[1]?'tomorrow':'today'};
+// "<habit name> yaptım" / "3 <habit name>" : the phrase must be the habit name plus a done-word, nothing else
+const c=s.match(/^(\d{1,2})\s+/),rest=c?s.slice(c[0].length):s;
+const hx=habitsOn(T).find(y=>[y.name.toLocaleLowerCase('tr'),y.name.toLowerCase()].some(z=>z.length>1&&rest.startsWith(z)&&DONEW.includes(rest.slice(z.length).trim())));
+if(hx)return{type:'toggle_habit',name:hx.name,count:c?+c[1]:1};
+return null};
+return P(part.toLocaleLowerCase('tr'))||P(part.toLowerCase().replace(/̇/g,''))} // Turkish and English lower-case I/İ differently
+function localCmd(q){
+const q0=String(q).trim().replace(/(\d),(\d)/g,'$1.$2').replace(/[.!]+$/,'').trim();
+if(!q0||q0.length>90||q0.includes('?'))return null; // questions and long sentences go to the AI
+if(/\b(?:not|no|never|didn'?t|don'?t|haven'?t|couldn'?t)\b/i.test(q0)||/m[aı]d[ıi]m|me[dm]im|yapamad|değil|olmadı/.test(q0.toLocaleLowerCase('tr')))return null; // negations are never auto-logged
+let acts;const whole=parseCmd(q0);
+if(whole)acts=[whole];
+else{const parts=q0.split(/\s+(?:ve|and)\s+|\s*[,;]\s+/).map(x=>x.trim()).filter(Boolean);
+if(parts.length<2||parts.length>4)return null;acts=parts.map(parseCmd);if(acts.some(a=>!a))return null} // all parts must be understood, or nothing runs
+const out=[];acts.forEach(a=>{try{const r=act(a);if(r)out.push(r)}catch(e){}});
+return out.length?out:null;
+}
+/* Voice input (Web Speech API) */
+const SRec=window.SpeechRecognition||window.webkitSpeechRecognition;
+const vLang=()=>localStorage.getItem('jv.vlang')||'tr-TR';
+function listen(onText,btn){
+if(!SRec){toast('VOICE INPUT NOT SUPPORTED IN THIS BROWSER');return}
+try{const r=new SRec();r.lang=vLang();r.interimResults=false;r.maxAlternatives=1;
+if(btn)btn.classList.add('rec');snd('key');
+r.onresult=e=>{const t=e.results&&e.results[0]&&e.results[0][0]?e.results[0][0].transcript:'';if(t)onText(t)};
+r.onerror=e=>{const c=String(e.error||'unknown');toast(c==='not-allowed'?'MICROPHONE PERMISSION DENIED':c==='no-speech'?'NO SPEECH DETECTED':'VOICE ERROR: '+c.toUpperCase())};
+r.onend=()=>{if(btn)btn.classList.remove('rec')};r.start()}
+catch(e){if(btn)btn.classList.remove('rec');toast('VOICE INPUT FAILED')}
+}
+function jarvisModal(autoMic){modal('J.A.R.V.I.S. COMMAND TERMINAL',()=>{
+const log=h('div',{}),inp=h('input',{type:'text',placeholder:'Command or question… e.g. "20 şınav" / "kilo 60.4" / "add physics homework due Friday"',enterkeyhint:'send'});
+const add=(c,t)=>{log.append(h('div',{class:'msg '+(c||'')},raw(t)));log.scrollTop=log.scrollHeight};
+chat.forEach(m=>add(m.u?'u':'',m.t));if(!chat.length)add('','At your service, sir. Type or tap MIC and speak. I can log weight, food, sleep, steps, study time, push-ups, habits, homework and reminders, and open any module.');
+const go=async()=>{const q=inp.value.trim();if(!q)return;inp.value='';chat.push({u:1,t:q});add('u',q);
+const lc=localCmd(q);
+if(lc){const reply='Done.';chat.push({t:reply+' '+lc.join(' · ')});lc.forEach(d=>add('','> EXECUTED: '+d));snd('ok');speak(reply);if(lc.some(d=>!d.startsWith('OPENING')))save();return}
+if(!key()){const t='That one needs the AI link. Add a Gemini API key in Settings. Simple commands such as "20 şınav", "kilo 60.4" or "45 dakika ders çalıştım" work without it.';chat.push({t});add('',t);return}
+try{const r=await gem([{text:`${JP}\nContext: ${ctx()}\nRecent chat: ${chat.slice(-6).map(m=>(m.u?'User: ':'JARVIS: ')+m.t).join('\n')}\nUser: ${q}`}],true);
+const reply=String(r.reply||'Done.');chat.push({t:reply});add('',reply);speak(reply);
+const done=(Array.isArray(r.actions)?r.actions.slice(0,5):[]).map(a=>{try{return act(a||{})}catch(e){return null}}).filter(Boolean);
+done.forEach(d=>add('','> EXECUTED: '+d));if(done.length){snd('ok');if(done.some(d=>!d.startsWith('OPENING')))save()}}
+catch(e){snd('warn');add('','Systems fault: '+e.message)}};
+inp.onkeydown=e=>{if(e.key==='Enter')go()};
+const mic=h('button',{class:'btn am',onclick:()=>listen(t=>{inp.value=t;go()},mic)},'MIC');
+const lg=h('button',{class:'btn',onclick:()=>{const v=vLang()==='tr-TR'?'en-US':'tr-TR';localStorage.setItem('jv.vlang',v);lg.textContent=sm('MIC LANGUAGE: '+v.slice(0,2).toUpperCase())}},'MIC LANGUAGE: '+vLang().slice(0,2).toUpperCase());
+if(autoMic===true){autoMic=false;listen(t=>{inp.value=t;go()},mic)}
+return h('div',{},h('div',{class:'row'},tglVoice(),lg),log,h('div',{class:'row'},inp,mic,h('button',{class:'btn',onclick:go},'TRANSMIT')))},false)}
+/* ---------- Settings ---------- */
+function parseFbConfig(txt){ // accepts raw JSON or the "const firebaseConfig = {...}" snippet from the console
+try{const o=JSON.parse(txt);if(o&&o.apiKey&&o.projectId)return o}catch(e){}
+const o={};for(const m of txt.matchAll(/["']?(\w+)["']?\s*:\s*["']([^"']+)["']/g))o[m[1]]=m[2];
+return o.apiKey&&o.projectId?o:null;
+}
+function lsToggle(k,label,def,after){
+const b=h('button',{class:'btn'}),dr=()=>{b.textContent=sm(label+': '+(lsOn(k,def)?'ON':'OFF'));b.classList.toggle('am',lsOn(k,def))};
+b.onclick=()=>{localStorage.setItem(k,lsOn(k,def)?'0':'1');dr();if(after)after()};dr();return b}
+/* ===== v5: smooth mode switch, focus timer, net calculator, CSV, confetti ===== */
+let modeBusy=false;
+function modeSwitch(m,after){
+  if(modeBusy)return;modeBusy=true;
+  const run=()=>{applyMode(m);if(after)after()},done=()=>{modeBusy=false};
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){run();done();return}
+  if(document.startViewTransition){
+    try{const t=document.startViewTransition(run);t.finished.then(done,done);return}catch(e){}
+  }
+  const b=document.body;b.style.transition='opacity .28s ease';b.style.opacity='0';
+  setTimeout(()=>{run();b.style.opacity='1';setTimeout(()=>{b.style.transition='';b.style.opacity='';done()},320)},290);
+}
+try{localStorage.removeItem('jv.pomo')}catch(e){}
+/* ---- TYT / AYT net calculator ---- */
+const NETP={TYT:[['Turkish',40],['Social',20],['Math',40],['Science',20]],AYT:[['Math',40],['Physics',14],['Chemistry',13],['Biology',13]]};
+const netOf=(d,y)=>Math.round((d-y/4)*100)/100;
+function netModal(){modal('NET CALCULATOR',()=>{
+  let type=localStorage.getItem('jv.nettype')==='AYT'?'AYT':'TYT';
+  const box=h('div',{});
+  const draw=()=>{
+    const rows=NETP[type].map(([n,m])=>({n,m,d:h('input',{type:'text',inputmode:'numeric',placeholder:'0',maxlength:'2','aria-label':n+' correct'}),y:h('input',{type:'text',inputmode:'numeric',placeholder:'0',maxlength:'2','aria-label':n+' wrong'}),o:h('span',{class:'mu'},'0')}));
+    const val=r=>{const d=Math.min(r.m,Math.max(0,parseInt(r.d.value)||0)),y=Math.min(r.m-d,Math.max(0,parseInt(r.y.value)||0));return{d,y,net:netOf(d,y)}};
+    const tot=h('b',{},'0');
+    const calc=()=>{let t=0;rows.forEach(r=>{const v=val(r);r.o.textContent=String(v.net);t+=v.net});tot.textContent=String(Math.round(t*100)/100)};
+    rows.forEach(r=>{r.d.oninput=r.y.oninput=calc});
+    const hist=S.nets.filter(x=>x.type===type).slice(0,5);
+    box.replaceChildren(
+      h('div',{class:'row'},['TYT','AYT'].map(k=>h('button',{class:'btn'+(type===k?' am':''),style:'flex:1',onclick:()=>{type=k;localStorage.setItem('jv.nettype',k);draw()}},k))),
+      h('div',{class:'netg'},h('span',{class:'sub'},'Subject'),h('span',{class:'sub'},'Correct'),h('span',{class:'sub'},'Wrong'),h('span',{class:'sub'},'Net'),
+        rows.flatMap(r=>[h('span',{},r.n+' /'+r.m),r.d,r.y,r.o])),
+      h('div',{class:'row',style:'align-items:center'},h('span',{class:'sub',style:'flex:1'},'TOTAL NET'),tot),
+      h('div',{class:'row'},h('button',{class:'btn am',style:'flex:1',onclick:()=>{
+        const rs=rows.map(r=>({n:r.n,...val(r)}));if(!rs.some(r=>r.d||r.y)){toast('ENTER AT LEAST ONE ANSWER');return}
+        S.nets.unshift({id:uid(),d:today(),type,rows:rs,net:Math.round(rs.reduce((a,r)=>a+r.net,0)*100)/100});S.nets=S.nets.slice(0,60);snd('ok');save();toast('NET SAVED');draw()}},'SAVE RESULT')),
+      hist.length>1?h('div',{},h('div',{class:'sub',style:'margin-top:12px'},'TREND · '+type),h('div',{class:'trend'},hist.slice().reverse().map(x=>h('i',{title:x.d+' · '+x.net,style:'height:'+Math.max(4,Math.min(100,x.net/NETP[type].reduce((a,r)=>a+r[1],0)*100))+'%'})))):'',
+      hist.length?h('div',{},h('div',{class:'sub',style:'margin-top:12px'},'RECENT '+type),hist.map(x=>h('div',{class:'row',style:'align-items:center'},
+        h('span',{style:'flex:1'},x.d+' · '+x.net+' net'),h('button',{class:'btn rd',style:'flex:none;min-height:36px',onclick:()=>{S.nets=S.nets.filter(y=>y.id!==x.id);save();draw()}},'DEL')))):'');
+    calc();
+  };
+  draw();return box;
+},false)}
+const lastNet=()=>S.nets[0];
+/* ---- CSV export ---- */
+function exportCSV(){
+  const q=v=>{v=String(v==null?'':v);return /[",\n;]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+  const rows=[['date','study_min','pushups','steps','sleep_h','weight_kg','kcal','protein_g','day_score_pct']];
+  for(let i=89;i>=0;i--){const d=dk(new Date(Date.now()-i*864e5)),v=dayVals(d);
+    rows.push([d,v.study,v.pu,v.steps,v.sleep,S.weight[d]==null?'':S.weight[d],v.kcal,v.pro,dayScore(d).pct])}
+  dl('stark-os-'+today()+'.csv','﻿'+rows.map(r=>r.map(q).join(',')).join('\n'),'text/csv');toast('CSV EXPORTED · LAST 90 DAYS');
+}
+/* ---- confetti ---- */
+function confetti(){
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  const w=h('div',{class:'confetti','aria-hidden':'true'});
+  for(let i=0;i<46;i++){const p=h('i',{});p.style.cssText=`left:${Math.random()*100}%;background:hsl(${Math.floor(Math.random()*360)} 80% 60%);animation-delay:${Math.random()*.5}s;animation-duration:${1.6+Math.random()*1.2}s;transform:rotate(${Math.floor(Math.random()*360)}deg)`;w.append(p)}
+  document.body.append(w);setTimeout(()=>w.remove(),3400);
+}
+
+const VER='6.0';
+function settingsModal(){modal('SYSTEM CONFIG',()=>{
+const k=h('input',{type:'password',placeholder:'Gemini API key (stored in this browser only)',value:key()});
+const fb=h('textarea',{rows:6,placeholder:'Paste Firebase webConfig, e.g. { "apiKey": "...", "authDomain": "...", "projectId": "...", "appId": "..." }',value:localStorage.getItem('jv.fbcfg')||''});
+const t=TG(),tg=h('input',{type:'text',value:[t.kcal,t.pro,t.carb,t.fat,t.caf].join(',')}),gl=h('input',{type:'text',value:[t.study,t.pu,t.steps,t.sleep].join(',')});
+const salt=h('input',{type:'text',readonly:'readonly',value:getSalt()});
+const lb=+localStorage.getItem('jv.lastBackup')||0;
+const al=h('button',{class:'btn'}),alD=()=>{const m=+localStorage.getItem('jv.autolock')||0;al.textContent=sm('AUTO-LOCK: '+(m?m+' MIN':'OFF'));al.classList.toggle('am',!!m)};
+al.onclick=()=>{const m=+localStorage.getItem('jv.autolock')||0;localStorage.setItem('jv.autolock',String(m===0?5:m===5?15:0));alD()};alD();
+return h('div',{},
+h('div',{class:'sub'},'GEMINI API KEY'),k,
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{localStorage.setItem('gemini_api_key',k.value.trim());localStorage.removeItem('jv.key');toast('API KEY STORED LOCALLY')}},'SAVE KEY'),
+h('button',{class:'btn',onclick:e=>{k.type=k.type==='password'?'text':'password';e.target.textContent=sm(k.type==='password'?'SHOW':'HIDE')}},'SHOW'),
+h('button',{class:'btn rd',onclick:()=>{localStorage.removeItem('gemini_api_key');localStorage.removeItem('jv.key');k.value='';toast('KEY ERASED')}},'ERASE')),
+h('div',{class:'sub',style:'margin-top:16px'},'FIREBASE CLOUD SYNC · webConfig'),fb,
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const c=parseFbConfig(fb.value);if(!c){toast('CONFIG NEEDS apiKey AND projectId');return}
+localStorage.setItem('jv.fbcfg',JSON.stringify(c));toast('FIREBASE CONFIG STORED — RELOADING');setTimeout(()=>location.reload(),900)}},'SAVE & LINK'),
+h('button',{class:'btn rd',onclick:()=>{localStorage.removeItem('jv.fbcfg');toast('CLOUD LINK REMOVED — RELOADING');setTimeout(()=>location.reload(),900)}},'UNLINK')),
+h('div',{class:'mu',style:'font-size:12px;margin-top:6px'},'Status: '+$('sy').textContent),
+h('div',{class:'sub',style:'margin-top:16px'},'VAULT SALT (SECRET — copy to link another device)'),salt,
+h('div',{class:'row'},h('button',{class:'btn',onclick:()=>{navigator.clipboard&&navigator.clipboard.writeText(salt.value).then(()=>toast('SALT COPIED'),()=>toast('COPY FAILED'))}},'COPY SALT')),
+h('div',{class:'sub',style:'margin-top:16px'},'DAILY TARGETS · kcal, protein, carbs, fat, caffeine'),tg,
+h('div',{class:'sub',style:'margin-top:10px'},'DAILY GOALS · study min, push-ups, steps, sleep h (0 = not counted)'),gl,
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const v=tg.value.split(',').map(num),g=gl.value.split(',').map(num);
+if(v.length!==5||v.some(x=>x===null||x<0)){toast('TARGETS NEED 5 NUMBERS');return}
+if(g.length!==4||g.some(x=>x===null||x<0)){toast('GOALS NEED 4 NUMBERS');return}
+S.targets={...TG(),kcal:v[0],pro:v[1],carb:v[2],fat:v[3],caf:v[4],study:g[0],pu:g[1],steps:g[2],sleep:g[3]};save();toast('TARGETS SAVED')}},'SAVE TARGETS'),
+h('button',{class:'btn',onclick:e=>{const m=localStorage.getItem('jv.mute')==='1';localStorage.setItem('jv.mute',m?'0':'1');e.target.textContent=sm(m?'SOUND: ON':'SOUND: OFF');if(m)snd('ok')}},localStorage.getItem('jv.mute')==='1'?'SOUND: OFF':'SOUND: ON'),
+h('button',{class:'btn',onclick:e=>{const v=(vol()+1)%3;localStorage.setItem('jv.vol',String(v));e.target.textContent=sm('VOLUME: '+VOLS[v]);snd('ok')}},'VOLUME: '+VOLS[vol()]),tglVoice()),
+h('div',{class:'note'},'The day score is the average of these goals plus your habits. Protein counts from the targets line above.'),
+h('div',{class:'sub',style:'margin-top:16px'},'AUTOMATION'),
+h('div',{class:'row'},lsToggle('jv.autotheme','AUTO THEME',1,()=>{autoCur='';applyTheme(localStorage.getItem('jv.theme')||'cyan');autoTheme()}),lsToggle('jv.autobrief','AUTO BRIEFING',1),lsToggle('jv.smart','SMART ALERTS',1),al),
+h('div',{class:'note'},'Auto theme (HUD only): gold when the day score reaches 90%, strike orange when you are behind after 15:00. Auto briefing opens once a day after unlock. Auto-lock asks for the passcode again after the app has been in the background.'),
+h('div',{class:'sub',style:'margin-top:16px'},'DATA SAFETY'),
+h('div',{class:'row'},h('button',{class:'btn'+(bkDue()?' am':''),onclick:exportBackup},'EXPORT BACKUP (.JSON)'),h('button',{class:'btn',onclick:()=>$('bkf').click()},'RESTORE BACKUP'),h('button',{class:'btn',onclick:snapModal},'RESTORE POINTS'),h('button',{class:'btn',onclick:exportCSV},'EXPORT CSV')),
+h('div',{class:'note'},'Last export: '+(lb?new Date(lb).toLocaleDateString('en-GB')+' ('+Math.floor((Date.now()-lb)/864e5)+' days ago)':'never')+'. A restore point is saved on this device once a day automatically. Vault size: '+Math.round(JSON.stringify(S).length/1024).toLocaleString('en-US')+' KB (cloud sync allows about 1,000 KB).'),
+h('div',{class:'sub',style:'margin-top:16px'},'DISPLAY MODE'),h('div',{class:'row'},modeButtons()),h('div',{class:'note'},'Stark-OS version '+VER+'.'),isMin()?'':h('div',{class:'sub',style:'margin-top:16px'},'THEME'),themeBlock())},false)}
+/* ---------- Vault backup (export / restore / daily restore points) ---------- */
+function dl(name,text,type){const a=h('a',{href:URL.createObjectURL(new Blob([text],{type})),download:name});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+const bkDue=()=>S.t>0&&Date.now()-(+localStorage.getItem('jv.lastBackup')||0)>7*864e5;
+function exportBackup(){
+const o={app:'stark-os',version:3,exported:new Date().toISOString(),data:S};
+dl(`stark-os-backup-${today()}.json`,JSON.stringify(o,null,2),'application/json');
+localStorage.setItem('jv.lastBackup',String(Date.now()));toast('BACKUP EXPORTED (API key, salt and Firebase config are not included)');render(true);
+}
+function loadData(d){ // keep known keys with the right type only
+const b=blank(),n={};for(const k in b)n[k]=(k in d&&typeof d[k]===typeof b[k]&&Array.isArray(d[k])===Array.isArray(b[k]))?d[k]:b[k];
+n.run=null;n.targets={...b.targets,...n.targets};return n}
+$('bkf').onchange=async e=>{
+const f=e.target.files[0];e.target.value='';if(!f)return;
+try{
+const j=JSON.parse(await f.text()),d=j&&j.data&&typeof j.data==='object'?j.data:j;
+if(!d||typeof d!=='object'||Array.isArray(d)||!['weight','hw','refuel','study','gym'].some(k=>k in d))throw new Error('not a stark-os backup');
+if(!confirm('Replace ALL data in this vault with the backup?'))return;
+S=loadData(d);normS();save();snd('ok');toast('VAULT RESTORED');
+}catch(err){console.error('[restore]',err);snd('warn');toast('RESTORE FAILED: '+String(err.message).slice(0,50))}
+};
+/* Local database (this device only): daily restore points + error-log photos */
+const idb=(()=>{let p;
+const open=()=>p||(p=new Promise((res,rej)=>{let r;try{r=indexedDB.open('stark-os',1)}catch(e){rej(e);return}
+r.onupgradeneeded=()=>{const d=r.result;['img','snap'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s)})};
+r.onsuccess=()=>{const d=r.result;d.onclose=()=>{p=null};d.onversionchange=()=>{d.close();p=null};res(d)};r.onerror=()=>{p=null;rej(r.error)}}));
+const once=(st,mode,fn)=>open().then(d=>new Promise((res,rej)=>{const t=d.transaction(st,mode),q=fn(t.objectStore(st));t.oncomplete=()=>res(q&&q.result);t.onerror=t.onabort=()=>rej(t.error)}));
+const tx=(st,mode,fn)=>once(st,mode,fn).catch(()=>{p=null;return once(st,mode,fn)}); // one retry on a fresh connection
+return{get:(st,k)=>tx(st,'readonly',s=>s.get(k)),set:(st,k,v)=>tx(st,'readwrite',s=>s.put(v,k)),del:(st,k)=>tx(st,'readwrite',s=>s.delete(k)),keys:st=>tx(st,'readonly',s=>s.getAllKeys())}})();
+let snapDay='';
+function snapshot(){ // once a day, before any cloud data is merged: keep the vault as it was (max 14 per vault)
+if(!K||!S.t)return;snapDay=today();const k=K+'|'+snapDay;
+idb.get('snap',k).then(v=>v?null:idb.set('snap',k,JSON.stringify(S))).then(()=>idb.keys('snap'))
+.then(ks=>{const mine=ks.map(String).filter(x=>x.startsWith(K+'|')).sort();return Promise.all(mine.slice(0,Math.max(0,mine.length-14)).map(x=>idb.del('snap',x)))})
+.catch(e=>console.warn('[restore points] unavailable:',e));
+}
+function snapModal(){modal('RESTORE POINTS',()=>{
+const box=h('div',{},h('div',{class:'mu'},'Loading…'));
+idb.keys('snap').then(ks=>{const mine=ks.map(String).filter(x=>x.startsWith(K+'|')).sort().reverse();
+box.replaceChildren(h('div',{class:'note',style:'margin-top:0'},'One restore point per day, saved on this device only, as the vault was when you first opened the app that day (before cloud sync). An extra point is kept if a much smaller cloud copy ever replaces your data. The last 14 are kept.'),
+mine.length?'':h('div',{class:'mu',style:'margin-top:10px'},'No restore points yet. The first one is saved tomorrow morning.'),
+...mine.map(x=>h('div',{class:'li'},h('span',{},x.split('|')[1]),h('button',{class:'btn am',onclick:async()=>{
+if(!confirm('Replace the current vault with the restore point from '+x.split('|')[1]+'?'))return;
+try{const v=await idb.get('snap',x);S=loadData(JSON.parse(v));normS();save();snd('ok');toast('RESTORE POINT LOADED');settingsModal()}catch(e){snd('warn');toast('RESTORE FAILED')}}},'RESTORE'))))
+}).catch(()=>box.replaceChildren(h('div',{class:'mu'},'Restore points are not available in this browser (private mode or storage blocked).')));
+return box},false)}
+/* ====================== v4 MODULES ====================== */
+/* ---------- Shared helpers ---------- */
+const raw=x=>document.createTextNode(String(x??'')); // user-entered text: never re-cased by sm()
+const addDays=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return dk(x)};
+const dayDiff=(a,b)=>Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/864e5); // b minus a, in days
+const DOW=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const weekOf=off=>{const n=new Date(),m=new Date(n.getFullYear(),n.getMonth(),n.getDate()-((n.getDay()+6)%7)+off*7,12);return [...Array(7)].map((_,i)=>{const x=new Date(m);x.setDate(m.getDate()+i);return dk(x)})}; // Monday-first week
+const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+const lsOn=(k,def)=>(localStorage.getItem(k)??String(def))==='1';
+const SVGNS='http://www.w3.org/2000/svg';
+function sv(tag,attrs,...kids){const e=document.createElementNS(SVGNS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);kids.flat().forEach(c=>e.append(c));return e}
+function pbar(r,cls){r=Math.max(0,Math.min(1,Number(r)||0));return h('div',{class:'cp'+(cls?' '+cls:'')},h('i',{style:`width:${Math.round(r*100)}%`}))}
+function spark(vals,w=280,ht=56){
+const pts=vals.map((v,i)=>[i,v]).filter(p=>p[1]!=null&&isFinite(p[1]));
+if(pts.length<2)return h('div',{class:'note'},'Not enough data for a trend line yet.');
+const ys=pts.map(p=>p[1]),mn=Math.min(...ys),mx=Math.max(...ys),sp=mx-mn||1,n=(vals.length-1)||1,X=i=>4+i/n*(w-8),Y=v=>ht-7-(v-mn)/sp*(ht-14),l=pts[pts.length-1];
+return sv('svg',{viewBox:`0 0 ${w} ${ht}`,class:'spark',preserveAspectRatio:'none','aria-hidden':'true'},
+sv('path',{d:pts.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)).join(' '),fill:'none',stroke:'currentColor','stroke-width':'1.6','vector-effect':'non-scaling-stroke'}),
+sv('circle',{cx:X(l[0]).toFixed(1),cy:Y(l[1]).toFixed(1),r:3,fill:'currentColor'}));
+}
+const copyTxt=t=>{if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>toast('COPIED TO CLIPBOARD'),()=>toast('COPY FAILED'));else toast('CLIPBOARD NOT AVAILABLE')};
+/* ---------- Daily goals and day score ---------- */
+const GOALS=[['study','Study'],['pu','Push-ups'],['steps','Steps'],['sleep','Sleep'],['pro','Protein']];
+function dayVals(d){const rf=S.refuel[d]||[],sum=k=>rf.reduce((a,x)=>a+(x[k]||0),0);
+return{study:studyMin(d)+(d===today()?runMin():0),pu:puTotal(d),steps:(S.steps[d]&&S.steps[d].n)||0,sleep:(S.sleep[d]&&S.sleep[d].h)||0,pro:Math.round(sum('pro')),kcal:Math.round(sum('kcal'))}}
+const hasData=d=>!!(sess(d).length||puList(d).length||S.steps[d]||S.sleep[d]||(S.refuel[d]||[]).length||S.hlog[d]||S.weight[d]!=null||S.journal[d]);
+function dayScore(d){const tg=TG(),v=dayVals(d),parts=[];
+GOALS.forEach(([k,l])=>{if(tg[k]>0)parts.push({k,l,r:Math.min(1,v[k]/tg[k]),v:v[k],t:tg[k]})});
+const hs=habitsOn(d);if(hs.length){const n=hs.filter(x=>habDone(x,d)).length;parts.push({k:'habits',l:'Habits',r:n/hs.length,v:n,t:hs.length})}
+return{pct:parts.length?Math.round(parts.reduce((a,p)=>a+p.r,0)/parts.length*100):0,parts}}
+/* ---------- Level (lifetime XP) and personal records ---------- */
+const ROMAN=n=>{let o='';[[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']].forEach(([v,s])=>{while(n>=v){o+=s;n-=v}});return o||'I'};
+let _life={t:-1};
+function life(){ // cached until the vault changes
+if(_life.t===S.t&&_life.d===today()&&_life.k===K)return _life;
+const ds=new Set(),best={score:[0,''],study:[0,''],pu:[0,''],steps:[0,'']};let xp=0,days=0;
+['study','pushups','steps','sleep','refuel','hlog'].forEach(k=>Object.keys(S[k]||{}).forEach(d=>ds.add(d)));
+ds.forEach(d=>{if(!/^\d{4}-\d\d-\d\d$/.test(d)||d>today())return;const p=dayScore(d).pct,v=dayVals(d);xp+=p;days++;
+if(p>best.score[0])best.score=[p,d];if(v.study>best.study[0])best.study=[v.study,d];if(v.pu>best.pu[0])best.pu=[v.pu,d];if(v.steps>best.steps[0])best.steps=[v.steps,d]});
+const lvl=Math.max(1,Math.floor((1+Math.sqrt(1+8*xp/100))/2));
+return _life={t:S.t,d:today(),k:K,xp,days,lvl,prev:100*lvl*(lvl-1)/2,next:100*lvl*(lvl+1)/2,best}}
+/* ---------- Habits and streaks ---------- */
+const habCount=(x,d)=>((S.hlog[d]||{})[x.id])||0;
+const habDone=(x,d)=>habCount(x,d)>=(x.target||1);
+const habitsOn=d=>S.habits.filter(x=>(x.created||'')<=d&&(!x.arch||(x.archAt&&d<x.archAt))); // an archived habit still counts for the days before it was archived
+function habSet(x,d,n){n=Math.max(0,Math.min(999,Math.round(n)));const o=S.hlog[d]=S.hlog[d]||{};if(n)o[x.id]=n;else delete o[x.id];if(!Object.keys(o).length)delete S.hlog[d]}
+function streakOf(fn){ // consecutive days ending today, or yesterday while today is still open
+let d=today(),n=0;if(!fn(d))d=addDays(d,-1);
+while(n<3650&&fn(d)){n++;d=addDays(d,-1)}return n}
+const habStreak=x=>streakOf(d=>habDone(x,d));
+const AUTO=[['study','Study goal'],['pu','Push-up goal'],['steps','Step goal'],['sleep','Sleep goal'],['pro','Protein goal']];
+const autoStreak=k=>{const t=TG()[k];return t>0?streakOf(d=>dayVals(d)[k]>=t):0};
+const HSUG=[['Water (glasses)',8],['Read 20 min',1],['Stretch',1],['No phone after 23:00',1],['Review notes',1]];
+let habOff=0; // 0 = today, -1 = yesterday … back-logging keeps streaks honest
+function habitModal(keep){if(keep!==true)habOff=0;modal('HABIT PROTOCOLS',()=>{
+const T0=today(),T=addDays(T0,habOff),nm=h('input',{type:'text',placeholder:'New habit, e.g. Water (glasses)',maxlength:'60'}),tg=h('input',{type:'text',inputmode:'numeric',placeholder:'Times per day (1)',style:'max-width:150px'});
+const add=(n,t)=>{n=String(n).trim().slice(0,60);if(n.length<2){toast('HABIT NAME REQUIRED');return}t=Math.round(num(t)||1);if(!(t>=1&&t<=99))t=1;
+if(S.habits.some(x=>!x.arch&&x.name.toLowerCase()===n.toLowerCase())){toast('HABIT ALREADY EXISTS');return}
+S.habits.push({id:uid(),name:n,target:t,created:T0});save();toast('HABIT ADDED')};
+const hs=habitsOn(T),dn=hs.filter(x=>habDone(x,T)).length,sug=HSUG.filter(s=>!S.habits.some(x=>!x.arch&&x.name===s[0]));
+const row=x=>{const c=habCount(x,T),ok=habDone(x,T),st=habStreak(x),multi=(x.target||1)>1;
+return h('div',{class:'hab'+(ok?' ok':'')},
+h('button',{class:'hab-main',onclick:()=>{hap();habSet(x,T,multi?c+1:(ok?0:1));snd(habDone(x,T)?'ok':'key');save()}},
+h('span',{class:'hab-box'},ok?'✓':(multi?String(c):'')),
+h('span',{class:'hab-nm'},h('span',{},raw(x.name)),h('span',{class:'mu hab-sub'},(multi?`${c}/${x.target} · `:'')+(st?`STREAK ${st} DAY${st>1?'S':''}`:'NO STREAK YET')),
+h('span',{class:'dots7'},[...Array(7)].map((_,i)=>h('i',{class:habDone(x,addDays(T0,i-6))?'f':''}))))),
+multi?h('button',{class:'btn',style:'min-height:38px','aria-label':'One less',onclick:()=>{habSet(x,T,c-1);save()}},'−'):'',
+h('button',{class:'btn rd',style:'min-height:38px','aria-label':'Archive habit',onclick:()=>{if(confirm('Remove "'+x.name+'" from the list? Its history is kept for past reports.')){x.arch=1;x.archAt=T0;save()}}},'×'))};
+return h('div',{},
+h('div',{class:'row',style:'margin-top:0'},h('button',{class:'btn',style:'flex:none'+(habOff<=-6?';opacity:.35':''),'aria-label':'Previous day',onclick:()=>{if(habOff>-6){habOff--;habitModal(true)}}},'◀'),
+h('div',{class:'sub',style:'text-align:center'},habOff===0?'TODAY':habOff===-1?'YESTERDAY':T),
+h('button',{class:'btn',style:'flex:none'+(habOff>=0?';opacity:.35':''),'aria-label':'Next day',onclick:()=>{if(habOff<0){habOff++;habitModal(true)}}},'▶')),
+h('div',{class:'big'},hs.length?`${dn} / ${hs.length}`:'NO HABITS'),
+hs.length?pbar(dn/hs.length,dn===hs.length?'full':''):'',
+hs.map(row),
+h('div',{class:'sub',style:'margin-top:16px'},'ADD HABIT'),
+h('div',{class:'row'},nm,tg,h('button',{class:'btn am',onclick:()=>add(nm.value,tg.value)},'ADD')),
+sug.length?h('div',{class:'seg'},sug.map(s=>h('button',{class:'btn',onclick:()=>add(s[0],s[1])},'+ '+s[0]))):'',
+h('div',{class:'note'},'Tap a habit to tick it. Habits with a count (for example 8 glasses) add one per tap. The seven squares are the last seven days. Forgot to tick yesterday? Use the arrows to go back up to six days.'),
+h('div',{class:'sub',style:'margin-top:16px'},'AUTO-TRACKED GOAL STREAKS'),
+AUTO.map(([k,l])=>{const t=TG()[k];if(!(t>0))return'';const s=autoStreak(k),v=dayVals(T0)[k];
+return h('div',{class:'li'},h('span',{},l),h('span',{class:'mu',style:'font-size:12px'},`${Math.round(v*10)/10} / ${t}`),h('span',{class:s?'up':'mu'},s?`${s} DAY${s>1?'S':''}`:'—'))}))})}
+/* ---------- Missions (daily to-do list; unfinished items carry over) ---------- */
+const tkToday=()=>{const T=today();return S.tasks.filter(x=>x.done?dk(new Date(x.doneAt||0))===T:x.d<=T)};
+function tkAdd(t,d){t=String(t||'').trim().slice(0,140);if(!t){toast('MISSION TEXT REQUIRED');return false}
+if(S.tasks.length>=400){toast('MISSION LIST IS FULL — DELETE OLD ITEMS');return false}
+S.tasks.push({id:uid(),t,d:d||today(),done:0});return true}
+function tkToggle(x){x.done=x.done?0:1;if(x.done)x.doneAt=Date.now();else{delete x.doneAt;if(x.d<today())x.d=today()}}
+let tkTom=false,tkFocus=false;
+function taskModal(keep){if(keep!==true)tkTom=false;modal('MISSIONS',()=>{
+const T=today(),D=tkTom?addDays(T,1):T,inp=h('input',{type:'text',placeholder:tkTom?'Mission for tomorrow':'New mission for today',maxlength:'140',enterkeyhint:'done'});
+const list=tkTom?S.tasks.filter(x=>!x.done&&x.d===D):tkToday(),open=list.filter(x=>!x.done),done=list.filter(x=>x.done);
+const add=()=>{if(tkAdd(inp.value,D)){tkFocus=true;snd('key');save()}};
+inp.onkeydown=e=>{if(e.key==='Enter')add()};
+if(tkFocus){tkFocus=false;setTimeout(()=>inp.focus(),0)}
+const row=x=>h('div',{class:'hab'+(x.done?' ok':'')},
+h('button',{class:'hab-main',onclick:()=>{hap();tkToggle(x);snd(x.done?'ok':'key');save()}},h('span',{class:'hab-box'},x.done?'✓':''),
+h('span',{class:'hab-nm',style:x.done?'opacity:.55':''},h('span',{},raw(x.t)),!x.done&&x.d<T?h('span',{class:'mu hab-sub'},'CARRIED OVER FROM '+x.d):'')),
+tkTom||x.done?'':h('button',{class:'btn',style:'min-height:38px','aria-label':'Move to tomorrow',title:'Move to tomorrow',onclick:()=>{x.d=addDays(T,1);save();toast('MOVED TO TOMORROW')}},'→'),
+h('button',{class:'btn rd',style:'min-height:38px','aria-label':'Delete mission',onclick:()=>{S.tasks=S.tasks.filter(y=>y.id!==x.id);save()}},'×'));
+return h('div',{},
+h('div',{class:'seg',style:'margin-top:0'},h('button',{class:'btn'+(tkTom?'':' on'),onclick:()=>{tkTom=false;taskModal(true)}},'TODAY'),h('button',{class:'btn'+(tkTom?' on':''),onclick:()=>{tkTom=true;taskModal(true)}},'TOMORROW')),
+tkTom?'':h('div',{class:'big'},list.length?`${done.length} / ${list.length}`:'CLEAR'),
+tkTom||!list.length?'':pbar(done.length/list.length,open.length?'':'full'),
+h('div',{class:'row'},inp,h('button',{class:'btn am',onclick:add},'ADD')),
+open.map(row),done.map(row),
+h('div',{class:'note'},tkTom?'Plan tomorrow tonight: these show up in the morning briefing.':'Unfinished missions carry over to the next day by themselves. The arrow moves one to tomorrow.'))})}
+/* ---------- Back-fill: log values for a day you forgot ---------- */
+let bfDate='';
+function backfillModal(keep){if(keep!==true)bfDate=addDays(today(),-1);modal('LOG A PAST DAY',()=>{
+const T=today(),d=bfDate,v=dayVals(d),j=S.journal[d]||{},dt=h('input',{type:'date',value:d,max:T});
+dt.onchange=()=>{if(dt.value&&dt.value<=T){bfDate=dt.value;backfillModal(true)}else{dt.value=d;toast('PICK TODAY OR AN EARLIER DAY')}};
+const F=(ph,val)=>h('input',{type:'text',inputmode:'decimal',placeholder:ph,value:val??''});
+const cur0={sl:S.sleep[d]?S.sleep[d].h:null,st:S.steps[d]?S.steps[d].n:null,w:S.weight[d]??null,md:j.mood||null};
+const sl=F('e.g. 7.5',cur0.sl),st=F('e.g. 8000',cur0.st),w=F('e.g. 60.4',cur0.w),md=F('1–5',cur0.md),pu=F('reps'),sy=F('minutes'),sb=h('input',{type:'text',placeholder:'Study subject (optional)',maxlength:'40'});
+const L=(t,i)=>h('label',{class:'mu',style:'font-size:11px'},t,i);
+return h('div',{},
+h('div',{class:'note',style:'margin-top:0'},'Forgot to log something? Pick the day and change only what you need. Empty fields are left as they are, so streaks and reports stay honest.'),
+h('div',{class:'row'},dt),
+h('div',{class:'kv'},h('span',{},`So far: ${v.study} min study · ${v.pu} push-ups · ${v.steps.toLocaleString('en-US')} steps`),h('span',{},`Score ${dayScore(d).pct}%`)),
+h('div',{class:'row'},L('Sleep (h)',sl),L('Steps',st)),h('div',{class:'row'},L('Weight (kg)',w),L('Mood 1–5',md)),h('div',{class:'row'},L('Add push-ups',pu),L('Add study (min)',sy)),h('div',{class:'row'},sb),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{
+const g=i=>i.value.trim()===''?null:num(i.value),a=g(sl),b=g(st),c=g(w),m=g(md),p=g(pu),s=g(sy);
+// validate everything first, then write
+if([sl,st,w,md,pu,sy].some(i=>i.value.trim()!==''&&num(i.value)===null)){toast('NUMBERS ONLY');return}
+if(a!=null&&(a<0||a>24)){toast('SLEEP: 0–24 HOURS');return}
+if(b!=null&&(b<0||b>200000)){toast('STEPS OUT OF RANGE');return}
+if(c!=null&&(c<20||c>400)){toast('INVALID MASS VALUE');return}
+if(m!=null&&!(m>=1&&m<=5)){toast('MOOD: 1–5');return}
+if(p!=null&&!(p>0&&p<=1000)){toast('PUSH-UPS: 1–1000');return}
+if(s!=null&&!(s>0&&s<=720)){toast('STUDY: 1–720 MIN');return}
+let n=0;const noon=new Date(d+'T12:00:00').getTime();
+if(a!=null&&a!==cur0.sl){S.sleep[d]={h:a,q:(S.sleep[d]||{}).q||''};n++}
+if(b!=null&&Math.round(b)!==cur0.st){S.steps[d]={n:Math.round(b),kcal:(S.steps[d]||{}).kcal||0};n++}
+if(c!=null&&c!==cur0.w){S.weight[d]=c;n++}
+if(m!=null&&Math.round(m)!==cur0.md){S.journal[d]={mood:Math.round(m),note:j.note||''};n++}
+if(p!=null){(S.pushups[d]=S.pushups[d]||[]).push({id:uid(),t:noon,n:Math.round(p)});n++}
+if(s!=null){const o={id:uid(),s:noon,e:noon+Math.round(s)*6e4},sj=sb.value.trim().slice(0,40);if(sj)o.subj=sj;(S.study[d]=S.study[d]||[]).push(o);n++}
+if(!n){toast('NOTHING TO SAVE');return}snd('ok');save();toast(`${n} VALUE${n>1?'S':''} SAVED FOR ${d}`)}},'SAVE')))})}
+/* ---------- Mission log (mood + daily note) ---------- */
+const MOOD=['ROUGH','LOW','OKAY','GOOD','PEAK'];
+function journalModal(){modal('MISSION LOG',()=>{
+const T=today(),j=S.journal[T]||{},ta=h('textarea',{rows:5,maxlength:'2000',placeholder:'What happened today? What worked, what did not?',value:j.note||''});
+const put=m=>{S.journal[T]={mood:m||j.mood||0,note:ta.value.trim().slice(0,2000)};if(!S.journal[T].mood&&!S.journal[T].note)delete S.journal[T];save()};
+const days=Object.keys(S.journal).filter(d=>d!==T).sort().reverse().slice(0,10),ms=[...Array(14)].map((_,i)=>{const e=S.journal[addDays(T,i-13)];return e&&e.mood?e.mood:null});
+return h('div',{},
+h('div',{class:'sub'},'HOW WAS TODAY?'),
+h('div',{class:'seg'},MOOD.map((l,i)=>h('button',{class:'btn'+(j.mood===i+1?' on':''),onclick:()=>{hap();put(i+1);toast('MOOD LOGGED')}},`${i+1} · ${l}`))),
+ta,h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{put();toast('LOG SAVED')}},'SAVE NOTE')),
+h('div',{class:'sub',style:'margin-top:16px'},'MOOD · LAST 14 DAYS'),spark(ms),
+days.length?h('div',{class:'sub',style:'margin-top:16px'},'EARLIER ENTRIES'):'',
+days.map(d=>{const e=S.journal[d];return h('div',{class:'msg'},h('div',{class:'sub'},d+(e.mood?` · ${e.mood}/5 ${MOOD[e.mood-1]}`:'')),e.note?raw(e.note):'')}))})}
+/* ---------- Mission countdown (exam dates + topic plan) ---------- */
+const evSorted=()=>[...S.events].sort((a,b)=>a.date.localeCompare(b.date));
+const nextEv=()=>evSorted().find(e=>e.date>=today());
+const dLeft=e=>dayDiff(today(),e.date);
+function evModal(){modal('MISSION COUNTDOWN',()=>{
+const nm=h('input',{type:'text',placeholder:'Exam or goal name, e.g. TYT',maxlength:'60'}),dt=h('input',{type:'date',min:today()}),list=evSorted();
+return h('div',{},
+list.length?'':h('div',{class:'note',style:'margin-top:0'},'No dates yet. Add your exam date and the countdown appears on the dashboard and in the daily briefing.'),
+list.map(e=>{const d=dLeft(e),tp=e.topics||[],dn=tp.filter(t=>t.done).length;
+return h('button',{class:'ev'+(d<0?' past':''),onclick:()=>evDetail(e.id)},
+h('span',{class:'ev-d'},d>=0?String(d):'✓'),
+h('span',{class:'ev-b'},h('span',{class:'ev-n'},raw(e.name)),h('span',{class:'mu',style:'font-size:12px'},(d>0?'DAYS LEFT · ':d===0?'TODAY · ':'PASSED · ')+e.date+(tp.length?` · ${dn}/${tp.length} TOPICS`:'')),tp.length?pbar(dn/tp.length,dn===tp.length?'full':''):''))}),
+h('div',{class:'sub',style:'margin-top:16px'},'ADD DATE'),
+h('div',{class:'row'},nm,dt),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const n=nm.value.trim();if(!n||!dt.value){toast('NAME AND DATE REQUIRED');return}S.events.push({id:uid(),name:n.slice(0,60),date:dt.value,topics:[]});save();toast('COUNTDOWN SET')}},'ADD'),
+h('button',{class:'btn',onclick:exportICS},'EXPORT TO CALENDAR (.ICS)')))})}
+function evDetail(id){modal('MISSION COUNTDOWN',()=>{
+const e=S.events.find(x=>x.id===id);if(!e)return h('div',{},h('div',{class:'mu'},'This entry no longer exists.'),h('div',{class:'row'},h('button',{class:'btn',onclick:evModal},'BACK')));
+const d=dLeft(e),tp=e.topics=e.topics||[],left=tp.filter(t=>!t.done).length,wks=Math.max(1,Math.ceil(d/7));
+const ta=h('textarea',{rows:3,placeholder:'Add topics, one per line (e.g. Limits, Derivatives, Kinematics)'}),out=h('div',{class:'note'});
+const addT=arr=>{let n=0;arr.forEach(t=>{t=String(t||'').trim().slice(0,80);if(t&&tp.length<200&&!tp.some(x=>x.t.toLowerCase()===t.toLowerCase())){tp.push({id:uid(),t,done:0});n++}});return n};
+return h('div',{},
+h('div',{class:'sub'},raw(e.name),' · '+e.date),
+h('div',{class:'big'},d>0?`T-${d} DAYS`:d===0?'TODAY':'PASSED'),
+tp.length?pbar((tp.length-left)/tp.length,left?'':'full'):'',
+tp.length?h('div',{class:'kv'},h('span',{},`${tp.length-left} / ${tp.length} topics done`),h('span',{},d>0&&left?`Pace needed: ${Math.ceil(left/wks)} per week`:left?'':'Plan complete')):'',
+tp.map(t=>h('div',{class:'hab'+(t.done?' ok':'')},
+h('button',{class:'hab-main',onclick:()=>{hap();t.done=t.done?0:1;snd(t.done?'ok':'key');save()}},h('span',{class:'hab-box'},t.done?'✓':''),h('span',{class:'hab-nm',style:t.done?'opacity:.55':''},raw(t.t))),
+h('button',{class:'btn rd',style:'min-height:38px','aria-label':'Remove topic',onclick:()=>{e.topics=tp.filter(x=>x.id!==t.id);save()}},'×'))),
+ta,
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const n=addT(ta.value.split(/\n|;/));if(!n){toast('NOTHING NEW TO ADD');return}save();toast(`${n} TOPIC${n>1?'S':''} ADDED`)}},'ADD TOPICS'),
+h('button',{class:'btn',onclick:async()=>{out.textContent='Building a topic plan…';
+try{const tm={};S.mistakes.filter(m=>!m.done).forEach(m=>{const k=m.subject+' / '+(m.topic||'General');tm[k]=(tm[k]||0)+1});
+const r=await gem([{text:`You are a study planner for an 11th grade student in Türkiye. Exam: "${e.name}" on ${e.date} (${d} days left). Weak topics from practice exams, weakest first: ${JSON.stringify(examStats().rows.slice(0,12))}. Open mistakes by topic: ${JSON.stringify(tm)}. Existing checklist: ${JSON.stringify(tp.map(t=>t.t))}. Reply ONLY JSON {"topics":["..."]}: up to 25 concrete syllabus topics to master for this exam, most important first, none already in the checklist, written in the language of the exam name.`}],true);
+const e2=S.events.find(x=>x.id===id);if(!e2){out.textContent='This entry no longer exists.';return}const tp2=e2.topics=e2.topics||[];let n=0;
+(Array.isArray(r.topics)?r.topics.slice(0,25):[]).forEach(t=>{t=String(t||'').trim().slice(0,80);if(t&&tp2.length<200&&!tp2.some(x=>x.t.toLowerCase()===t.toLowerCase())){tp2.push({id:uid(),t,done:0});n++}});
+if(n){save();toast(`${n} TOPIC${n>1?'S':''} ADDED`)}else out.textContent='The AI had nothing new to add.'}
+catch(err){out.textContent=err.message==='key'?'Add a Gemini API key in Settings to use the AI plan.':'AI plan failed: '+err.message}}},'AI TOPIC PLAN')),
+out,
+h('div',{class:'row',style:'margin-top:16px'},h('button',{class:'btn',onclick:evModal},'BACK'),
+h('button',{class:'btn rd',onclick:()=>{if(confirm('Delete "'+e.name+'" and its topic plan?')){S.events=S.events.filter(x=>x.id!==id);save();evModal()}}},'DELETE')))})}
+/* ---------- Error log (missed questions + spaced review) ---------- */
+const SRS=[1,3,7,14,30,60]; // days until the next review after each successful recall
+const mkDue=()=>S.mistakes.filter(m=>!m.done&&m.due&&m.due<=today());
+function mkGrade(m,ok){
+if(ok){m.stage=(m.stage||0)+1;m.reps=(m.reps||0)+1;if(m.stage>=SRS.length){m.done=1;m.due=''}else m.due=addDays(today(),SRS[m.stage])}
+else{m.stage=0;m.lapses=(m.lapses||0)+1;m.due=addDays(today(),SRS[0])}
+save();
+}
+const MKP=`You are a tutor for an 11th grade student in Türkiye. The image shows a question the student got wrong (their wrong working may be visible). Reply ONLY JSON:
+{"subject":"Math|Physics|Chemistry|Biology|Turkish|History|Geography|English|Other","topic":"specific syllabus topic","question":"short restatement of the question, LaTeX allowed without $ delimiters","solution":["step 1","step 2"],"answer":"final answer","pitfall":"one sentence: the most likely reason a student misses this"}
+Keep the question's own language for question, solution and pitfall. Double every backslash in LaTeX so the JSON stays valid. If the image is not a question, reply {"subject":"","topic":"","question":"","solution":[],"answer":"","pitfall":""}.`;
+let mkBusy='';
+function mkNew(o){const T=today(),str=(x,m)=>String(x??'').trim().slice(0,m),fx=v=>String(v??'').replace(/\x0c/g,'\\f').replace(/\t/g,'\\t').replace(/\x08/g,'\\b').replace(/\r/g,'\\r');
+const m={id:uid(),date:T,subject:str(o.subject,60)||'General',topic:str(o.topic,80),q:str(fx(o.q),1500),sol:str(fx(o.sol),3000),why:str(o.why,300),stage:0,due:addDays(T,SRS[0]),reps:0,lapses:0};
+S.mistakes.unshift(m);return m}
+async function mkAddPhoto(f){
+if(!f)return;if(!/^image\//.test(f.type)){toast('IMAGE FILES ONLY');return}
+if(!key()){toast('NO API KEY — OPEN SETTINGS');return}
+mkBusy='Reading the question…';mkModal();
+try{const img=await encodeImage(f),r=await gem([{text:MKP},{inlineData:img}],true);
+if(!String(r.question||'').trim()&&!String(r.topic||'').trim())throw new Error('no question found in the image');
+const sol=(Array.isArray(r.solution)?r.solution.map((s,i)=>`${i+1}. ${s}`).join('\n'):String(r.solution||''))+(r.answer?`\nAnswer: ${r.answer}`:'');
+const m=mkNew({subject:r.subject,topic:r.topic,q:r.question,sol,why:r.pitfall});m.img=1;
+try{await idb.set('img',m.id,'data:'+img.mimeType+';base64,'+img.data)}catch(e){m.img=0;console.warn('[error log] photo not stored:',e)}
+mkBusy='';save();snd('scan');toast('ERROR LOGGED — FIRST REVIEW TOMORROW');mkDetail(m.id)}
+catch(e){mkBusy='';console.error('[error log]',e);snd('warn');toast(e.message==='key'?'NO API KEY — OPEN SETTINGS':'PHOTO FAILED: '+String(e.message).slice(0,70));mkModal()}
+}
+function mkImg(m){const im=h('img',{class:'mk-img',alt:'Photo of the question'});im.style.display='none';
+if(m.img)idb.get('img',m.id).then(v=>{if(v){im.src=v;im.style.display='block'}}).catch(()=>{});return im}
+function mkModal(){modal('ERROR LOG',()=>{
+const due=mkDue(),f=['Subject','Topic'].map(p=>h('input',{type:'text',placeholder:p,maxlength:'80'})),q=h('textarea',{rows:2,placeholder:'Question (short summary)'}),sol=h('textarea',{rows:2,placeholder:'Correct solution or the key idea'}),why=h('input',{type:'text',placeholder:'Why did I miss it? (careless, formula, concept…)',maxlength:'300'});
+const tp={};S.mistakes.forEach(m=>{const k=m.subject+' / '+(m.topic||'General');tp[k]=(tp[k]||0)+1});
+const top=Object.entries(tp).sort((a,b)=>b[1]-a[1]).slice(0,5),T=today();
+return h('div',{},
+h('div',{class:'big'},mkBusy?'ANALYZING…':due.length+' DUE'),
+mkBusy?h('div',{class:'note',style:'text-align:center'},mkBusy):'',
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{if(!mkDue().length){toast('NOTHING DUE — WELL DONE');return}mkReview(true)}},'START REVIEW'),h('button',{class:'btn',onclick:()=>$('mkf').click()},'ADD FROM PHOTO')),
+h('div',{class:'note'},'Photo: the AI reads the question, tags the topic and writes the solution. Each entry comes back for review after 1, 3, 7, 14, 30 and 60 days. Photos stay on this device; the text syncs.'),
+top.length?h('div',{class:'sub',style:'margin-top:16px'},'MOST MISSED TOPICS'):'',
+top.map(([k,n])=>h('div',{class:'li'},h('span',{},raw(k)),h('span',{class:'lv-warn'},'×'+n))),
+h('div',{class:'sub',style:'margin-top:16px'},'ADD MANUALLY'),
+h('div',{class:'row'},f[0],f[1]),q,sol,h('div',{class:'row'},why),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{if(!q.value.trim()&&!f[1].value.trim()){toast('QUESTION OR TOPIC REQUIRED');return}mkNew({subject:f[0].value,topic:f[1].value,q:q.value,sol:sol.value,why:why.value});save();toast('ERROR LOGGED — FIRST REVIEW TOMORROW')}},'ADD')),
+h('div',{class:'sub',style:'margin-top:16px'},`ALL ENTRIES · ${S.mistakes.length}`),
+S.mistakes.map(m=>h('button',{class:'li',style:'width:100%;text-align:left'+(m.done?';opacity:.5':''),onclick:()=>mkDetail(m.id)},
+h('span',{style:'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},raw(`${m.subject} — ${m.topic||tex2txt(m.q).slice(0,40)}`)),
+h('span',{class:m.done?'mu':m.due<=T?'lv-warn':'mu',style:'flex:none'},m.done?'MASTERED':m.due<=T?'DUE':m.due))))})}
+function mkBody(m,showSol){return[
+h('div',{class:'sub'},raw(m.subject+(m.topic?' · '+m.topic:''))),
+mkImg(m),
+h('div',{class:'msg'},h('div',{class:'sub'},'QUESTION'),h('div',{class:'tex'},raw(tex2txt(m.q)||'(see photo)'))),
+showSol?h('div',{class:'msg',style:'border-color:var(--am)'},h('div',{class:'sub'},'SOLUTION'),h('div',{class:'tex'},raw(tex2txt(m.sol)||'—'))):'',
+showSol&&m.why?h('div',{class:'msg'},h('div',{class:'sub'},'WHY IT WAS MISSED'),raw(m.why)):'']}
+function mkDetail(id){modal('ERROR LOG // ENTRY',()=>{
+const m=S.mistakes.find(x=>x.id===id);if(!m)return h('div',{},h('div',{class:'mu'},'This entry no longer exists.'),h('div',{class:'row'},h('button',{class:'btn',onclick:mkModal},'BACK')));
+return h('div',{},mkBody(m,true),
+h('div',{class:'kv'},h('span',{},'Logged '+m.date),h('span',{},m.done?'Mastered':`Next review ${m.due} · recalled ${m.reps||0}× · missed again ${m.lapses||0}×`)),
+h('div',{class:'row'},h('button',{class:'btn',onclick:mkModal},'BACK'),
+h('button',{class:'btn',onclick:()=>{if(m.done){m.done=0;m.stage=0;m.due=addDays(today(),SRS[0])}else{m.done=1;m.due=''}save()}},m.done?'REVIEW AGAIN':'MARK MASTERED'),
+h('button',{class:'btn rd',onclick:()=>{if(!confirm('Delete this entry?'))return;S.mistakes=S.mistakes.filter(x=>x.id!==id);idb.del('img',id).catch(()=>{});save();mkModal()}},'DELETE')))})}
+let mkQ=[],mkShow=false;
+function mkReview(start){
+if(start){mkQ=mkDue().map(m=>m.id);mkShow=false}
+modal('ERROR LOG // REVIEW',()=>{
+while(mkQ.length&&!S.mistakes.some(x=>x.id===mkQ[0]))mkQ.shift();
+const m=S.mistakes.find(x=>x.id===mkQ[0]);
+if(!m)return h('div',{},h('div',{class:'big'},'CLEAR'),h('div',{class:'note',style:'text-align:center'},'All due reviews are done for today.'),h('div',{class:'row'},h('button',{class:'btn',onclick:mkModal},'BACK')));
+const next=ok=>{hap();snd(ok?'ok':'key');const id=mkQ.shift(),mm=S.mistakes.find(x=>x.id===id);mkShow=false;if(mm)mkGrade(mm,ok);mkReview(false)};
+return h('div',{},h('div',{class:'kv',style:'margin:0 0 10px'},h('span',{},`${mkQ.length} left`),h('span',{},`Review ${Math.min((m.stage||0)+1,SRS.length)} of ${SRS.length}`)),
+mkBody(m,mkShow),
+mkShow?h('div',{class:'row'},h('button',{class:'btn am',style:'flex:1;min-height:52px',onclick:()=>next(true)},'GOT IT'),h('button',{class:'btn rd',style:'flex:1;min-height:52px',onclick:()=>next(false)},'MISSED AGAIN'))
+:h('div',{class:'row'},h('button',{class:'btn am',style:'flex:1;min-height:52px',onclick:()=>{mkShow=true;mkReview(false)}},'SHOW SOLUTION')),
+h('div',{class:'note'},mkShow?'Got it: the next review moves further away. Missed again: it comes back tomorrow.':'Try to solve it in your head or on paper first.'))},false)}
+/* ---------- Class schedule ---------- */
+function ttModal(){modal('CLASS SCHEDULE',()=>{
+const order=[1,2,3,4,5,6,0],ins=order.map(d=>h('input',{type:'text',maxlength:'200',placeholder:'e.g. Math, Physics, Chemistry',value:S.timetable[d]||''})),td=new Date().getDay();
+return h('div',{},h('div',{class:'note',style:'margin-top:0'},'Lessons for each weekday, separated by commas. Today\'s lessons appear in the daily briefing.'),
+order.map((d,i)=>h('div',{class:'row'},h('span',{class:'sub'+(d===td?' up':''),style:'flex:none;width:42px'},DOW[d]),ins[i])),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{const o={};order.forEach((d,i)=>{const v=ins[i].value.trim().slice(0,200);if(v)o[d]=v});S.timetable=o;save();toast('SCHEDULE SAVED')}},'SAVE SCHEDULE')))},false)}
+/* ---------- Alerts (reminders + smart alerts + calendar export) ---------- */
+const remFired=()=>{try{const f=JSON.parse(localStorage.getItem('jv.remf'));return f&&f._d===today()?f:{_d:today()}}catch(e){return{_d:today()}}};
+function remSkipToday(id,time){const n=new Date();if(time<=pad(n.getHours())+':'+pad(n.getMinutes())){const f=remFired();f[id]=1;localStorage.setItem('jv.remf',JSON.stringify(f))}} // a new alert whose time already passed starts tomorrow
+function notify(title,body,tag){
+toast(title+(body?' — '+body:''));snd('scan');hap();
+try{if('Notification' in window&&Notification.permission==='granted'){
+const o={body:body||'',tag:'stark-'+(tag||'alert'),icon:'icon-192.png',badge:'icon-192.png'};
+if(navigator.serviceWorker&&navigator.serviceWorker.controller)navigator.serviceWorker.ready.then(r=>r.showNotification(title,o)).catch(()=>{});
+else new Notification(title,o)}}catch(e){}
+}
+function smartAlerts(){
+if(!lsOn('jv.smart',1))return[];const T=today(),o=[];
+const hw=S.hw.filter(x=>!x.done&&x.due&&x.due<=addDays(T,1));if(hw.length)o.push({id:'smart:hw',time:'18:00',title:'HOMEWORK DUE',body:hw.slice(0,3).map(x=>x.title).join(', ')});
+const d=mkDue().length;if(d)o.push({id:'smart:rev',time:'17:00',title:'ERROR LOG',body:`${d} review${d>1?'s':''} due today`});
+const hs=habitsOn(T).filter(x=>!habDone(x,T));if(hs.length)o.push({id:'smart:hab',time:'21:00',title:'HABITS STILL OPEN',body:hs.slice(0,3).map(x=>x.name).join(', ')});
+if(bkDue())o.push({id:'smart:bk',time:'19:00',title:'BACKUP DUE',body:'More than 7 days since the last export.'});
+if(!S.journal[T]&&S.t>0)o.push({id:'smart:log',time:'22:00',title:'MISSION LOG',body:'Thirty seconds: log your mood and one line about today.'});
+return o}
+let missed=[];
+function remTick(){
+if(!K)return;if(snapDay&&snapDay!==today()){missed=[];snapshot()}
+const now=new Date(),hm=pad(now.getHours())+':'+pad(now.getMinutes()),nowM=now.getHours()*60+now.getMinutes(),dow=now.getDay(),f=remFired();
+const all=[...S.reminders.filter(r=>r.on&&(!r.days||!r.days.length||r.days.includes(dow))).map(r=>({id:r.id,time:r.time,title:'ALERT',body:r.text,user:1})),...smartAlerts()];
+let ch=false;const late=[];
+all.forEach(r=>{if(!/^\d\d:\d\d$/.test(r.time)||r.time>hm||f[r.id])return;f[r.id]=1;ch=true;
+const p=r.time.split(':').map(Number);if(nowM-(p[0]*60+p[1])>20){if(r.user)late.push(r.time+' '+r.body)}else notify(r.title,r.body,r.id)});
+if(ch)localStorage.setItem('jv.remf',JSON.stringify(f));
+if(late.length){missed.push(...late);toast(`${late.length} MISSED ALERT${late.length>1?'S':''} — SEE BRIEFING`);render(true)}
+}
+setInterval(remTick,20000);
+let hidAt=0;
+document.addEventListener('visibilitychange',()=>{
+if(document.hidden){hidAt=Date.now();return}
+const m=+localStorage.getItem('jv.autolock')||0;
+if(K&&m&&hidAt&&Date.now()-hidAt>m*6e4){location.reload();return}
+if(K){remTick();render(true)}
+});
+const icsEsc=s=>String(s).replace(/([\\;,])/g,'\\$1').replace(/\r?\n/g,'\\n');
+function exportICS(){
+const rs=S.reminders.filter(r=>r.on),es=S.events.filter(e=>e.date>=today());
+if(!rs.length&&!es.length){toast('NOTHING TO EXPORT YET');return}
+const BY=['SU','MO','TU','WE','TH','FR','SA'],st=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,''),L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//stark-os//alerts//EN','CALSCALE:GREGORIAN'];
+rs.forEach(r=>{let d=today();if(r.days&&r.days.length)for(let i=0;i<7&&!r.days.includes(new Date(d+'T12:00:00').getDay());i++)d=addDays(d,1);
+L.push('BEGIN:VEVENT','UID:'+r.id+'@stark-os','DTSTAMP:'+st,'DTSTART:'+d.replace(/-/g,'')+'T'+r.time.replace(':','')+'00','DURATION:PT5M',
+'RRULE:FREQ='+(r.days&&r.days.length?'WEEKLY;BYDAY='+r.days.map(x=>BY[x]).join(','):'DAILY'),'SUMMARY:'+icsEsc(r.text),
+'BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(r.text),'TRIGGER:PT0M','END:VALARM','END:VEVENT')});
+es.forEach(e=>{L.push('BEGIN:VEVENT','UID:'+e.id+'@stark-os','DTSTAMP:'+st,'DTSTART;VALUE=DATE:'+e.date.replace(/-/g,''),'DTEND;VALUE=DATE:'+addDays(e.date,1).replace(/-/g,''),'SUMMARY:'+icsEsc(e.name),
+'BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(e.name+' in 7 days'),'TRIGGER:-P7D','END:VALARM',
+'BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(e.name+' tomorrow'),'TRIGGER:-P1D','END:VALARM','END:VEVENT')});
+L.push('END:VCALENDAR');
+dl('stark-os-alerts.ics',L.map(l=>l.replace(/(.{60})(?=.)/gu,'$1\r\n ')).join('\r\n')+'\r\n','text/calendar'); // long lines are folded as the calendar format requirestoast('CALENDAR FILE EXPORTED');
+}
+let remDays=[];
+function remModal(){modal('ALERT SCHEDULER',()=>{
+const tmI=h('input',{type:'time'}),tx=h('input',{type:'text',placeholder:'Alert text, e.g. Evening review',maxlength:'120'});
+const P=('Notification' in window)?Notification.permission:'unsupported';
+const ask=()=>{try{const p=Notification.requestPermission(()=>remModal());if(p&&p.then)p.then(()=>remModal())}catch(e){toast('NOTIFICATIONS NOT AVAILABLE')}};
+const dl0=r=>!r.days||!r.days.length?'Every day':r.days.slice().sort((a,b)=>((a+6)%7)-((b+6)%7)).map(d=>DOW[d].slice(0,2)).join(' ');
+const order=[1,2,3,4,5,6,0];
+return h('div',{},
+h('div',{class:'li'},h('span',{},'System notifications'),h('span',{class:P==='granted'?'up':'mu'},P==='granted'?'ON':P==='denied'?'BLOCKED':P==='default'?'OFF':'NOT SUPPORTED'),P==='default'?h('button',{class:'btn am',onclick:ask},'ENABLE'):''),
+h('div',{class:'note'},'Alerts fire while the app is open or resting in the background. A phone cannot be woken by a fully closed web app, so for alarms that always ring use EXPORT TO CALENDAR and let the phone calendar do the ringing.'+(P==='denied'?' Notifications are blocked for this site: allow them in the browser or phone settings.':'')),
+[...S.reminders].sort((a,b)=>a.time.localeCompare(b.time)).map(r=>h('div',{class:'li',style:r.on?'':'opacity:.5'},
+h('span',{style:'flex:none'},r.time),h('span',{style:'flex:1;min-width:0'},raw(r.text),h('span',{class:'mu',style:'display:block;font-size:11px'},dl0(r))),
+h('button',{class:'btn'+(r.on?' am':''),style:'min-height:38px',onclick:()=>{r.on=r.on?0:1;if(r.on)remSkipToday(r.id,r.time);save()}},r.on?'ON':'OFF'),
+h('button',{class:'btn rd',style:'min-height:38px','aria-label':'Delete alert',onclick:()=>{S.reminders=S.reminders.filter(x=>x.id!==r.id);save()}},'×'))),
+h('div',{class:'sub',style:'margin-top:16px'},'NEW ALERT'),
+h('div',{class:'row'},h('span',{style:'flex:none;width:120px'},tmI),tx),
+h('div',{class:'seg'},order.map(d=>{const b=h('button',{class:'btn'+(remDays.includes(d)?' on':''),onclick:()=>{remDays=remDays.includes(d)?remDays.filter(x=>x!==d):[...remDays,d];b.classList.toggle('on',remDays.includes(d))}},DOW[d].slice(0,2));return b})),
+h('div',{class:'note'},'No day selected = every day.'),
+h('div',{class:'row'},h('button',{class:'btn am',onclick:()=>{if(!tmI.value||!tx.value.trim()){toast('TIME AND TEXT REQUIRED');return}if(S.reminders.length>=40){toast('ALERT LIMIT REACHED');return}
+const id=uid();S.reminders.push({id,time:tmI.value.slice(0,5),text:tx.value.trim().slice(0,120),days:remDays.slice(),on:1});remSkipToday(id,tmI.value.slice(0,5));remDays=[];save();toast('ALERT SET')}},'ADD ALERT'),
+h('button',{class:'btn',onclick:()=>notify('TEST ALERT','Alerts are working.','test')},'TEST'),
+h('button',{class:'btn',onclick:exportICS},'EXPORT TO CALENDAR (.ICS)')),
+h('div',{class:'sub',style:'margin-top:16px'},'SMART ALERTS'),
+h('div',{class:'row'},lsToggle('jv.smart','SMART ALERTS',1)),
+h('div',{class:'note'},'Automatic: 17:00 error-log reviews due, 18:00 homework due by tomorrow, 19:00 backup overdue, 21:00 habits still open, 22:00 mood not logged.'),
+missed.length?h('div',{class:'sub',style:'margin-top:16px'},'MISSED TODAY'):'',
+missed.map(x=>h('div',{class:'li'},h('span',{class:'lv-warn'},raw(x)))))})}
+/* ---------- Insights (local rules, no AI needed) ---------- */
+function weekStats(days){
+const T=today(),ds=days.filter(d=>d<=T),vs=ds.map(dayVals),pos=a=>a.filter(x=>x>0),subj={};
+ds.forEach(d=>sess(d).forEach(s=>{const k=s.subj||'General';subj[k]=(subj[k]||0)+(s.e-s.s)/6e4}));
+const wk=days.map(d=>S.weight[d]).filter(x=>x!=null),moods=ds.map(d=>S.journal[d]&&S.journal[d].mood).filter(Boolean);
+let hd=0,ht=0;ds.forEach(d=>{const hs=habitsOn(d);ht+=hs.length;hd+=hs.filter(x=>habDone(x,d)).length});
+const fed=ds.filter(d=>(S.refuel[d]||[]).length).map(dayVals);
+return{n:ds.length,study:vs.reduce((a,v)=>a+v.study,0),pu:vs.reduce((a,v)=>a+v.pu,0),steps:avg(pos(vs.map(v=>v.steps))),sleep:avg(pos(vs.map(v=>v.sleep))),
+kcal:avg(fed.map(v=>v.kcal)),pro:avg(fed.map(v=>v.pro)),weight:wk.length?wk[wk.length-1]:null,
+hw:S.hw.filter(x=>x.done&&x.doneAt&&days.includes(dk(new Date(x.doneAt)))).length,tasks:S.tasks.filter(x=>x.done&&x.doneAt&&days.includes(dk(new Date(x.doneAt)))).length,gym:ds.filter(d=>S.gym[d]&&S.gym[d].length).length,
+habits:ht?Math.round(hd/ht*100):null,score:ds.length?Math.round(avg(ds.map(d=>dayScore(d).pct))):0,mood:avg(moods),subj,scores:days.map(d=>d<=T?dayScore(d).pct:null)}}
+function insights(){
+const T=today(),tg=TG(),o=[],P=(t,lv)=>o.push({t,lv:lv||''}),back=n=>[...Array(n)].map((_,i)=>addDays(T,-i));
+const sl=back(3).map(d=>S.sleep[d]&&S.sleep[d].h).filter(x=>x>0);
+if(tg.sleep>1&&sl.length===3&&sl.every(x=>x<tg.sleep-1))P(`Sleep has been under ${tg.sleep-1} h for three nights. Focus drops fast from here: plan an earlier night.`,'warn');
+const pr=back(7).filter(d=>(S.refuel[d]||[]).length).map(d=>dayVals(d).pro);
+if(tg.pro>0&&pr.length>=3&&avg(pr)<tg.pro*.8)P(`Protein is averaging ${Math.round(avg(pr))} g against a ${tg.pro} g target.`,'warn');
+const wd=Object.keys(S.weight).sort(),lw=wd[wd.length-1];
+if(lw){const r0=wd.filter(d=>d<=addDays(lw,-6)).pop();if(r0&&dayDiff(r0,lw)<=14){const df=S.weight[lw]-S.weight[r0];if(Math.abs(df)>=.3)P(`Weight is ${df>0?'up':'down'} ${Math.abs(df).toFixed(2)} kg over ${dayDiff(r0,lw)} days (${S.weight[r0]} → ${S.weight[lw]} kg).`)}}
+const a=weekStats(weekOf(0)),b=weekStats(weekOf(-1));
+if(b.study>0&&a.n>=3){const pa=(a.study-dayVals(T).study)/(a.n-1),pb=b.study/7; // finished days only: today is still in progress
+if(pa<pb*.7)P(`Study pace is ${Math.round(pa)} min a day, down from ${Math.round(pb)} last week.`,'warn');else if(pa>pb*1.2)P(`Study pace is up: ${Math.round(pa)} min a day against ${Math.round(pb)} last week.`)}
+const ex=examStats().rows[0];if(ex&&ex.acc<60&&ex.n>=3)P(`Weakest exam topic: ${ex.k} at ${ex.acc}%.`,'warn');
+const tp={};S.mistakes.filter(m=>!m.done).forEach(m=>{const k=m.subject+' / '+(m.topic||'General');tp[k]=(tp[k]||0)+1});
+const top=Object.entries(tp).sort((x,y)=>y[1]-x[1])[0];if(top&&top[1]>=3)P(`${top[1]} open mistakes in ${top[0]}. That topic needs one focused session.`,'warn');
+const best=AUTO.map(([k,l])=>[autoStreak(k),l]).sort((x,y)=>y[0]-x[0])[0];if(best&&best[0]>=3)P(`${best[1]} met ${best[0]} days in a row.`);
+return o}
+/* ---------- Weekly report ---------- */
+let wkOff=0;
+function weekText(days,a){const f=(x,d=0)=>x==null?'n/a':x.toFixed(d);
+return[`STARK-OS weekly report · ${days[0]} to ${days[6]}`,`Day score (average): ${a.score}%`,`Study: ${Math.floor(a.study/60)} h ${Math.round(a.study%60)} min`,
+...Object.entries(a.subj).sort((x,y)=>y[1]-x[1]).map(([k,v])=>`  - ${k}: ${Math.round(v)} min`),
+`Push-ups: ${a.pu}`,`Steps (daily average): ${f(a.steps)}`,`Sleep (average): ${f(a.sleep,1)} h`,`Calories (average): ${f(a.kcal)} kcal`,`Protein (average): ${f(a.pro)} g`,
+`Habits: ${a.habits==null?'n/a':a.habits+'%'}`,`Homework completed: ${a.hw}`,`Missions completed: ${a.tasks}`,`Gym sessions: ${a.gym}`,`Weight: ${a.weight==null?'n/a':a.weight+' kg'}`,`Mood (average): ${f(a.mood,1)} / 5`].join('\n')}
+function weekModal(){modal('WEEKLY REPORT',()=>{
+const days=weekOf(wkOff),a=weekStats(days),pd=weekOf(wkOff-1),b=weekStats(wkOff===0?pd.slice(0,Math.max(1,a.n)):pd),T=today(),lf=life(),out=h('pre',{class:'msg',style:'display:none'});
+const f=(x,dg)=>x==null?'—':(dg?x.toFixed(dg):Math.round(x).toLocaleString('en-US'));
+// inv: 0 = higher is better, 1 = lower is better, null = neutral
+const R=(l,x,y,u,dg,inv)=>{let d='',c='mu';if(x!=null&&y!=null){const df=x-y;if(Math.abs(df)>=(dg?.05:1)){const up=df>0;d=(up?'▲ ':'▼ ')+f(Math.abs(df),dg);c=inv==null?'mu':(up!==!!inv?'up':'dn')}else d='='}
+return h('div',{class:'wk'},h('span',{},l),h('span',{},f(x,dg)+(x!=null&&u?' '+u:'')),h('span',{class:'mu'},f(y,dg)),h('span',{class:c},d))};
+const subj=Object.entries(a.subj).sort((x,y)=>y[1]-x[1]),smax=subj.length?subj[0][1]:1,ins=wkOff===0?insights():[];
+const heat=[...Array(35)].map((_,i)=>addDays(weekOf(0)[6],i-34));
+return h('div',{},
+h('div',{class:'row',style:'margin-top:0'},h('button',{class:'btn',style:'flex:none','aria-label':'Previous week',onclick:()=>{wkOff--;weekModal()}},'◀'),
+h('div',{class:'sub',style:'text-align:center'},`${days[0]} → ${days[6]}`+(wkOff===0?' · THIS WEEK SO FAR':'')),
+h('button',{class:'btn',style:'flex:none'+(wkOff>=0?';opacity:.35':''),'aria-label':'Next week',onclick:()=>{if(wkOff<0){wkOff++;weekModal()}}},'▶')),
+h('div',{class:'big'},a.score+'%'),
+h('div',{class:'sub',style:'text-align:center'},'AVERAGE DAY SCORE'),
+h('div',{class:'bars7'},days.map((d,i)=>{const s=a.scores[i];return h('div',{class:d===T?'now':''},h('span',{},s==null?'':String(s)),h('i',{style:`height:${s==null?0:Math.max(2,s*.7)}%`+(s==null?';opacity:.2':'')}),h('span',{},DOW[(i+1)%7].slice(0,2)))})),
+h('div',{class:'wk hd',style:'margin-top:14px'},h('span',{},'Metric'),h('span',{},wkOff===0?'This week':'Week'),h('span',{},'Before'),h('span',{},'Change')),
+R('Study',a.study,b.study,'min',0,0),R('Push-ups',a.pu,b.pu,'',0,0),R('Steps / day',a.steps,b.steps,'',0,0),R('Sleep / night',a.sleep,b.sleep,'h',1,0),
+R('Calories / day',a.kcal,b.kcal,'',0,null),R('Protein / day',a.pro,b.pro,'g',0,0),R('Habits',a.habits,b.habits,'%',0,0),R('Homework done',a.hw,b.hw,'',0,0),R('Missions done',a.tasks,b.tasks,'',0,0),
+R('Gym sessions',a.gym,b.gym,'',0,0),R('Mood',a.mood,b.mood,'/ 5',1,0),R('Weight',a.weight,b.weight,'kg',2,null),
+wkOff===0?h('div',{class:'note'},'“Before” is the same weekdays of last week, so a week in progress is compared fairly.'):'',
+subj.length?h('div',{class:'sub',style:'margin-top:16px'},'STUDY BY SUBJECT'):'',
+subj.map(([k,v])=>h('div',{style:'margin-top:8px'},h('div',{class:'kv',style:'margin-top:0'},h('span',{},raw(k)),h('span',{},`${Math.round(v)} min`)),pbar(v/smax))),
+ins.length?h('div',{class:'sub',style:'margin-top:16px'},'INSIGHTS'):'',
+ins.map(x=>h('div',{class:'msg'+(x.lv?' lv-'+x.lv:'')},raw(x.t))),
+h('div',{class:'sub',style:'margin-top:16px'},isMin()?'LEVEL':'ARMOR LEVEL'),
+h('div',{class:'kv'},h('span',{style:'color:var(--tx);font-size:15px'},(isMin()?'Level '+lf.lvl:'Mark '+ROMAN(lf.lvl))),h('span',{},`${lf.xp.toLocaleString('en-US')} XP · ${(lf.next-lf.xp).toLocaleString('en-US')} to the next`)),
+pbar((lf.xp-lf.prev)/(lf.next-lf.prev)),
+h('div',{class:'note'},'Every day adds its day score as XP (up to 100). Each level needs 100 XP more than the one before.'),
+lf.days?h('div',{class:'sub',style:'margin-top:16px'},'ALL-TIME RECORDS'):'',
+lf.days?[['Best day score',lf.best.score,'%'],['Longest study day',lf.best.study,'min'],['Most push-ups in a day',lf.best.pu,''],['Most steps in a day',lf.best.steps,'']].filter(r=>r[1][0]>0).map(r=>h('div',{class:'li'},h('span',{},r[0]),h('span',{class:'mu',style:'font-size:12px'},r[1][1]),h('span',{class:'up'},r[1][0].toLocaleString('en-US')+(r[2]?' '+r[2]:'')))):'',
+h('div',{class:'sub',style:'margin-top:16px'},'LAST 5 WEEKS · DAY SCORE'),
+h('div',{class:'heat'},heat.map(d=>{const s=d<=T&&hasData(d)?dayScore(d).pct:null;return h('i',{class:d===T?'t':'',title:d+(s==null?'':' · '+s+'%'),style:s==null?'':`background:rgba(var(--pc-rgb),${(.12+s/100*.78).toFixed(2)})`})})),
+h('div',{class:'row',style:'margin-top:14px'},h('button',{class:'btn',onclick:()=>copyTxt(weekText(days,a))},'COPY SUMMARY'),
+h('button',{class:'btn am',onclick:async()=>{out.style.display='block';out.textContent='ANALYZING…';
+try{out.textContent=await gem([{text:`You are J.A.R.V.I.S., performance coach for an 11th grade student. This week: ${weekText(days,a)}\nWeek before: ${weekText(weekOf(wkOff-1),b)}\nDaily goals: ${JSON.stringify(TG())}. Give: 1) two things that went well, 2) the two biggest gaps, 3) three concrete adjustments for next week with numbers. Plain text, concise, English.`}])}
+catch(e){out.textContent=e.message==='key'?'Add a Gemini API key in Settings to use the AI analysis.':'ERROR: '+e.message}}},'AI ANALYSIS')),out)},false)}
+/* ---------- Daily briefing ---------- */
+const LINES=['Small reps, every day. Nothing worth wearing was built in one night.','Discipline is just remembering what you actually want.','You do not need more time. You need the next forty-five minutes.','Preparation looks boring until the day it looks like talent.','Start before you feel ready. Readiness tends to show up late.','One problem you solved beats ten you only read.','The plan is simple: show up, log it, repeat.','Tired is information, not a verdict. Sleep, then go again.','Mistakes are data. Log them and they start working for you.','Today\'s score is not who you are. It is only where to aim next.','Hard things get easier at exactly the rate you practise them.','A quiet hour of focus is worth a loud day of being busy.','Protect the streak, but protect your sleep first.','Nobody sees the training. Everybody sees the result.','If it matters, schedule it. If it is scheduled, do it.','Curiosity first. The grades follow.','You are building the person who sits that exam. Build carefully.','Finish the small task. Momentum handles the rest.','Rest is part of the work, not a break from it.','Do the hardest subject first, while your mind is fresh.','Progress is quiet. Check the log, not your mood.'];
+function briefLines(){
+const T=today(),Y=addDays(T,-1),now=new Date(),hr=now.getHours(),L=[],P=(t,lv)=>L.push({t,lv:lv||''}),pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+P(`${hr<5?'Burning the midnight oil':hr<12?'Good morning':hr<18?'Good afternoon':'Good evening'}, sir. It is ${now.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}.`);
+const ne=nextEv();if(ne){const d=dLeft(ne),tp=ne.topics||[],left=tp.filter(x=>!x.done).length;
+P(d===0?`${ne.name} is today. You have done the work. Good luck.`:`${ne.name} is in ${pl(d,'day')}${tp.length?`, with ${left} of ${pl(tp.length,'topic')} still open`:''}.`,d<=7?'warn':'')}
+const cls=String(S.timetable[now.getDay()]||'').trim();if(cls)P(`Classes today: ${cls}.`);
+const open=S.hw.filter(x=>!x.done),od=open.filter(x=>x.due&&x.due<T),td=open.filter(x=>x.due===T),tmr=open.filter(x=>x.due===addDays(T,1)),nm=a=>a.slice(0,3).map(x=>x.title).join(', ')+(a.length>3?` and ${a.length-3} more`:'');
+if(od.length)P(`Overdue homework (${od.length}): ${nm(od)}.`,'crit');
+if(td.length)P(`Due today: ${nm(td)}.`,'warn');
+if(tmr.length)P(`Due tomorrow: ${nm(tmr)}.`);
+if(!od.length&&!td.length&&!tmr.length)P(open.length?`${pl(open.length,'homework item')} open, nothing due before tomorrow night.`:'Homework queue is clear.');
+const tko=tkToday().filter(x=>!x.done);if(tko.length)P(`Missions today (${tko.length}): ${tko.slice(0,4).map(x=>x.t).join('; ')}${tko.length>4?' and more':''}.`);
+const due=mkDue().length;if(due)P(`${pl(due,'error-log review')} waiting. About ${Math.max(2,due*2)} minutes will clear them.`,'warn');
+if(S.sleep[T]&&S.sleep[T].h)P(`Last night: ${S.sleep[T].h} h of sleep${TG().sleep>0?(S.sleep[T].h>=TG().sleep?', on target':`, ${Math.round((TG().sleep-S.sleep[T].h)*10)/10} h short of target`):''}.`,TG().sleep>0&&S.sleep[T].h<TG().sleep-1?'warn':'');
+if(hasData(Y)){const v=dayVals(Y);P(`Yesterday scored ${dayScore(Y).pct}%: ${v.study} min of study, ${v.pu} push-ups, ${v.steps.toLocaleString('en-US')} steps, ${v.pro} g protein.`)}
+const ds=dayScore(T),todo=ds.parts.filter(p=>p.r<1).sort((a,b)=>b.r-a.r);
+if(ds.parts.length)P(todo.length?`Today so far: ${ds.pct}%. Closest target: ${todo[0].l.toLowerCase()}, ${Math.round(todo[0].v*10)/10} of ${todo[0].t}.`:`Today: ${ds.pct}%. Every target met.`);
+const risk=habitsOn(T).filter(x=>!habDone(x,T)&&habStreak(x)>=2);if(risk.length&&hr>=12)P(`Streaks at risk today: ${risk.slice(0,3).map(x=>`${x.name} (${habStreak(x)} days)`).join(', ')}.`,'warn');
+insights().slice(0,2).forEach(x=>P(x.t,x.lv));
+if(missed.length)P(`Missed alerts: ${missed.join('; ')}.`,'warn');
+if(bkDue())P('It has been more than a week since the last backup export. One tap in Settings fixes that.','warn');
+if(JSON.stringify(S).length>8e5)P('The vault is above 800 KB. Cloud sync stops near 1,000 KB: export a backup and delete old error-log entries or solved problems.','crit');
+P('“'+LINES[Math.floor(Date.now()/864e5)%LINES.length]+'”');
+return L}
+function briefModal(){const L=briefLines();modal('DAILY BRIEFING',()=>{
+const box=h('div',{class:'brief'}),out=h('pre',{class:'msg',style:'display:none'});
+setTimeout(async()=>{for(const l of L){if(!box.isConnected)return;const d=h('div',{class:'syslog-line'+(l.lv?' lv-'+l.lv:'')});box.append(d);
+if(isMin())d.textContent=l.t;else await typeText(d,'> '+l.t,{speed:7})}},60);
+return h('div',{},box,
+h('div',{class:'row',style:'margin-top:14px'},h('button',{class:'btn',onclick:()=>speak(L.map(l=>l.t).join(' '),true)},'READ ALOUD'),
+h('button',{class:'btn',onclick:weekModal},'WEEKLY REPORT'),
+h('button',{class:'btn am',onclick:async()=>{out.style.display='block';out.textContent='THINKING…';
+try{out.textContent=await gem([{text:`You are J.A.R.V.I.S., a precise, dry-witted assistant briefing an 11th grade student. Facts for today:\n${L.map(l=>'- '+l.t).join('\n')}\nTelemetry: ${ctx()}\nWrite a short plan for today: the three most important things in order, with a suggested time block for each, and one sentence of honest encouragement. Plain text, under 120 words, English.`}])}
+catch(e){out.textContent=e.message==='key'?'Add a Gemini API key in Settings to use the AI plan.':'ERROR: '+e.message}}},'AI DAY PLAN')),out)},false)}
+/* ---------- Goal-driven theme (HUD only) ---------- */
+var autoCur='';
+function autoTheme(){
+const base=localStorage.getItem('jv.theme')||'cyan';
+if(isMin()||!lsOn('jv.autotheme',1)){if(autoCur){autoCur='';applyTheme(base)}return}
+const n=new Date(),hr=n.getHours()+n.getMinutes()/60,ds=dayScore(today());if(!ds.parts.length)return;
+const exp=Math.max(0,Math.min(1,(hr-8)/14)),want=ds.pct>=90?'mark':(hr>=15&&ds.pct<exp*60)?'strike':base;
+if(want===autoCur)return;const first=!autoCur;autoCur=want;applyTheme(want,true);
+if(!first)toast(want==='mark'?'TARGETS MET — MARK GOLD PROTOCOL':want==='strike'?'BEHIND SCHEDULE — STRIKE MODE':'BACK ON TRACK');
+}
+/* ---------- After unlock: restore point, alerts, daily briefing ---------- */
+function afterUnlock(){
+remTick();
+const T=today();if(lsOn('jv.autobrief',1)&&localStorage.getItem('jv.briefDay')!==T&&S.t>0&&!$('modal').classList.contains('on')){localStorage.setItem('jv.briefDay',T);briefModal()}
+}
+$('mkf').onchange=e=>{const f=e.target.files[0];e.target.value='';mkAddPhoto(f)};
+/* ---------- Dashboard ---------- */
+function gauge(pct){const r=24,c=2*Math.PI*r,p=Math.max(0,Math.min(100,Math.round(pct)));
+return sv('svg',{viewBox:'0 0 64 64',class:'gauge','aria-hidden':'true'},
+sv('circle',{cx:32,cy:32,r:31,class:'g-out'}),sv('circle',{cx:32,cy:32,r:28.5,class:'g-tick'}),sv('circle',{cx:32,cy:32,r,class:'g-trk'}),
+sv('circle',{cx:32,cy:32,r,class:'g-val','stroke-dasharray':`${(c*p/100).toFixed(1)} ${c.toFixed(1)}`,transform:'rotate(-90 32 32)'}),
+sv('text',{x:32,y:36,'text-anchor':'middle',class:'g-tx'},String(p)),sv('text',{x:32,y:45,'text-anchor':'middle',class:'g-pc'},'%'))}
+const micIcon=()=>sv('svg',{viewBox:'0 0 24 24',width:22,height:22,'aria-hidden':'true'},sv('path',{fill:'currentColor',d:'M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12z'}));
+function renderHero(){
+const e=$('hero');if(!e)return;const T=today(),ds=dayScore(T),ne=nextEv(),open=S.hw.filter(x=>!x.done),od=open.filter(x=>x.due&&x.due<T).length,due=mkDue().length,hs=habitsOn(T),hd=hs.filter(x=>habDone(x,T)).length;
+const todo=ds.parts.filter(p=>p.r<1).sort((a,b)=>b.r-a.r)[0],lf=life(),bd=document.querySelector('.hud .badge'),seen=+localStorage.getItem('jv.lvl.'+K)||0;
+if(bd)bd.textContent=`MARK-${ROMAN(lf.lvl)} PROTOCOL`;
+if(lf.lvl!==seen){localStorage.setItem('jv.lvl.'+K,String(lf.lvl));if(seen&&lf.lvl>seen){snd('unlock');toast(isMin()?`Level up — level ${lf.lvl}`:`ARMOR UPGRADE — MARK ${ROMAN(lf.lvl)} ONLINE`)}}
+const nx=!ds.parts.length?'Set daily goals in Settings':todo?`Next: ${todo.l} ${Math.round(todo.v*10)/10} / ${todo.t}`:'All targets met';
+const chip=(t,f,c)=>h('button',{class:'chip'+(c?' '+c:''),onclick:()=>{hap();f()}},t);
+e.className='on';
+e.replaceChildren(
+h('button',{class:'hero-main',onclick:()=>{hap();briefModal()}},gauge(ds.pct),
+h('span',{class:'hero-t'},h('span',{class:'sub'},'Day score · '+(isMin()?'Level '+lf.lvl:'Mark '+ROMAN(lf.lvl))),
+h('b',{},ne?[raw(ne.name),' · ',h('span',{style:'white-space:nowrap'},dLeft(ne)===0?'TODAY':`T-${dLeft(ne)} DAYS`)]:'NO MISSION DATE SET'),
+h('span',{class:'sub'},nx))),
+h('button',{class:'mic','aria-label':'Voice command',title:'Voice command',onclick:()=>{hap();jarvisModal(true)}},micIcon()),
+h('div',{class:'chips'},
+chip('BRIEFING',briefModal),
+open.length?chip(od?`${od} HOMEWORK OVERDUE`:`${open.length} HOMEWORK OPEN`,hwModal,od?'crit':''):'',
+due?chip(`${due} REVIEW${due>1?'S':''} DUE`,mkModal,'warn'):'',
+hs.length?chip(`HABITS ${hd}/${hs.length}`,habitModal,hd===hs.length?'':'warn'):chip('ADD HABITS',habitModal),
+ne?'':chip('SET EXAM DATE',evModal),
+bkDue()?chip('BACKUP DUE',exportBackup,'warn'):'',
+chip('WEEKLY REPORT',weekModal),chip('LOG PAST DAY',backfillModal),
+(sk=>sk>=2?chip('STREAK '+sk+' DAYS',weekModal):'')(streakOf(d=>hasData(d)&&dayScore(d).pct>=70)),
+chip(localStorage.getItem('jv.focus')==='1'?'FOCUS: ON':'FOCUS MODE',()=>{localStorage.setItem('jv.focus',localStorage.getItem('jv.focus')==='1'?'0':'1');snd('ok');render()},localStorage.getItem('jv.focus')==='1'?'warn':'')));
+}
+// Typed-but-unsaved text survives a rebuild when the form layout is unchanged.
+function formGrab(ids){return ids.map(id=>[...$(id).querySelectorAll('input,textarea')].map(e=>({p:e.placeholder,t:e.type,v:e.value,f:document.activeElement===e})))}
+function formPut(ids,st){ids.forEach((id,k)=>{const els=[...$(id).querySelectorAll('input,textarea')],o=st[k];
+if(els.length!==o.length||els.some((e,i)=>e.placeholder!==o[i].p||e.type!==o[i].t))return;
+els.forEach((e,i)=>{if(e.type==='file')return;if(e.value!==o[i].v)e.value=o[i].v;if(o[i].f&&document.activeElement!==e){try{e.focus()}catch(x){}}})})}
+function render(keep){ // keep===true: passive refresh (sync, app switch, timers) — do not disturb what the user is typing
+if(!K)return;const ids=keep===true?['grid','mb']:['grid'],st=formGrab(ids),T=today(),tg=TG(),dv=dayVals(T),jr0=S.journal[T];
+const C=(t,v,f,am,id,x,cls)=>h('button',{class:'card'+(am?' am':'')+(cls?' '+cls:''),onclick:()=>{hap();f()}},h('span',{class:'sub'},t),h('b',id?{id}:{},v),x);
+const sec=t=>h('div',{class:'sec'},t),rr=(v,t)=>t>0?pbar(v/t,v>=t?'full':''):'',cs=(t,c)=>h('div',{class:'cs'+(c?' '+c:'')},t);
+const la=S.acad[0],laTxt=la?`${la.subject}: ${tex2txt(typeof la.answer==='string'?la.answer:'')||tex2txt(la.problem).slice(0,40)}`:'Drop a problem screenshot to solve it';
+const pu=h('div',{class:'card am w2'},h('span',{class:'sub'},'Push-ups today'),h('b',{},puTotal(T)+(tg.pu>0?` / ${tg.pu} reps`:' reps')),
+h('div',{class:'row'},[10,20,25].map(n=>h('button',{class:'btn am',style:'flex:1;min-height:40px',onclick:()=>addPU(n)},'+'+n)),h('button',{class:'btn',style:'flex:none;min-height:40px',onclick:pushupModal},'LOG')),rr(dv.pu,tg.pu));
+const tk=tkToday(),tkOpen=tk.filter(x=>!x.done),tkIn=h('input',{type:'text',placeholder:'Add a mission for today…',maxlength:'140',enterkeyhint:'done','aria-label':'New mission'});
+const tkGo=()=>{if(tkAdd(tkIn.value)){tkIn.value='';snd('key');save()}};tkIn.onkeydown=e=>{if(e.key==='Enter')tkGo()};
+const tc=h('div',{class:'card w2'},h('span',{class:'sub'},'Missions today'),h('b',{},tk.length?`${tk.length-tkOpen.length} / ${tk.length} done`:'None yet'),
+tkOpen.slice(0,4).map(x=>h('button',{class:'tk',onclick:()=>{hap();tkToggle(x);snd('ok');save()}},h('span',{class:'hab-box'}),h('span',{class:'tk-t'},raw(x.t)))),
+tkOpen.length>4?h('div',{class:'cs',style:'margin-top:6px'},`+ ${tkOpen.length-4} more`):'',
+h('div',{class:'row'},tkIn,h('button',{class:'btn am',style:'flex:none;min-height:44px',onclick:tkGo},'ADD'),h('button',{class:'btn',style:'flex:none;min-height:44px',onclick:taskModal},'ALL')),
+tk.length?pbar((tk.length-tkOpen.length)/tk.length,tkOpen.length?'':'full'):'');
+const ml=h('div',{class:'card w2'},h('span',{class:'sub'},'Mission log · mood'),h('b',{},jr0&&jr0.mood?`${jr0.mood}/5 · ${MOOD[jr0.mood-1]}`:'-- / 5'),
+h('div',{class:'row'},[1,2,3,4,5].map(n=>h('button',{class:'btn'+(jr0&&jr0.mood===n?' am':''),style:'flex:1;min-height:40px;padding:0','aria-label':'Mood '+n+' of 5',onclick:()=>{hap();S.journal[T]={mood:n,note:(S.journal[T]||{}).note||''};snd('ok');save()}},String(n))),h('button',{class:'btn',style:'flex:none;min-height:40px',onclick:journalModal},'NOTE')));
+const hs=habitsOn(T),hd=hs.filter(x=>habDone(x,T)).length,ne=nextEv(),due=mkDue().length,open=S.hw.filter(x=>!x.done),od=open.filter(x=>x.due&&x.due<T).length;
+const cls0=String(S.timetable[new Date().getDay()]||'').split(',').map(x=>x.trim()).filter(Boolean),ws=weekStats(weekOf(0)),al=S.reminders.filter(r=>r.on).length;
+renderHero();
+$('grid').replaceChildren(
+sec('Today'),
+tc,
+C('Study',S.run?clk(Date.now()-S.run):`${studyMin(T)} min`,studyModal,0,'cs',rr(dv.study,tg.study)),
+C('Habits',hs.length?`${hd} / ${hs.length} done`:'Set up',habitModal,0,'',hs.length?pbar(hd/hs.length,hd===hs.length?'full':''):cs('Streaks and daily checks')),
+pu,
+C('Refuel · kcal',`${dv.kcal} / ${tg.kcal}`,refuelModal,1,'',rr(dv.kcal,tg.kcal)),
+C('Sleep',S.sleep[T]?S.sleep[T].h+' h':'-- h',sleepModal,0,'',rr(dv.sleep,tg.sleep)),
+C('Steps',S.steps[T]?S.steps[T].n.toLocaleString('en-US'):'0',stepsModal,0,'',rr(dv.steps,tg.steps)),
+C('Weight',S.weight[T]!=null?S.weight[T]+' kg':'-- kg',weightModal),
+ml,
+sec('Academy'),
+C('Homework',open.length+' open',hwModal,1,'',od?cs(`${od} OVERDUE`,'crit'):''),
+C('Countdown',ne?(dLeft(ne)===0?'Today':`T-${dLeft(ne)} d`):'Set date',evModal,0,'',ne?h('div',{class:'cs'},raw(ne.name)):cs('Exam date and topic plan')),
+C('Error log',`${due} due`,mkModal,due?1:0,'',cs(`${S.mistakes.length} logged`)),
+C('Exam analytics',(examStats().overall??'--')+'%',examModal),
+C('Net calculator',lastNet()?lastNet().net+' net':'TYT / AYT',netModal,0,'',cs(lastNet()?lastNet().type+' · '+lastNet().d:'Correct minus a quarter of wrong')),
+C('Academic terminal',S.acad.length+' solved',acadModal,0,'',h('div',{class:'cs'},laTxt)),
+C('Class schedule',cls0.length?cls0.length+' today':'Set up',ttModal,0,'',cls0.length?h('div',{class:'cs'},raw(cls0.join(', '))):''),
+sec('Training'),
+C('Hypertrophy log',(n=>n+' session'+(n===1?'':'s'))(Object.keys(S.gym).length),gymModal),
+C('Strength recap','Weekly ➔',recapModal,1),
+sec('Intel'),
+C('Weekly report',ws.score+'% avg',weekModal,1,'',cs(`${Math.round(ws.study/6)/10} h of study`)),
+C('Daily briefing','Ready',briefModal,0,'',cs('Today at a glance')),
+C('Alerts',al+' active',remModal,0,'',missed.length?cs(`${missed.length} MISSED TODAY`,'warn'):''),
+C('J.A.R.V.I.S. command','Online',jarvisModal,0,'',cs('Voice and text commands')),
+C('Chat terminal','Online',chatModal,1),
+C('System config','⚙',settingsModal,1));
+$('grid').querySelectorAll('.card').forEach((c,i)=>c.style.setProperty('--i',i));
+if(dayScore(T).pct>=100&&localStorage.getItem('jv.conf')!==T){try{localStorage.setItem('jv.conf',T)}catch(e){}confetti();snd('ok')}
+autoTheme();
+if(localStorage.getItem('jv.focus')==='1'){const ch=[...$('grid').children],i=ch.findIndex((x,j)=>j>0&&x.classList.contains('sec'));if(i>0)ch.slice(i).forEach(x=>x.remove())}
+if(cur&&cur.live&&$('modal').classList.contains('on'))$('mb').replaceChildren(cur.mk());
+formPut(ids,st);
+}
+$('hs').onclick=()=>{hap();settingsModal()};
+const t0=Date.now();
+setInterval(()=>{$('up').textContent=clk(Date.now()-t0);if(S.run){const e=$('cs');if(e)e.textContent=clk(Date.now()-S.run);const m=$('stm');if(m)m.textContent=clk(Date.now()-S.run)}},1000);
+if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
+// --- 1. BOOT EKRANI OTOMATİK KAPATMA ---
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const bootScreen = document.getElementById('boot-screen');
+    if (bootScreen) bootScreen.classList.add('fade-out');
+  }, 1000);
+});
+
+// --- 2. SCI-FI BUTON SESİ (Web Audio API) ---
+function playClickSound() {
+  if (isMin() || localStorage.getItem('jv.mute') === '1') return; // minimal mode has its own soft click
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = AC.createOscillator(), gain = AC.createGain(), t = AC.currentTime;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, t);
+    osc.frequency.exponentialRampToValueAtTime(300, t + 0.04);
+    gain.gain.setValueAtTime(0.08, t);
+    gain.gain.linearRampToValueAtTime(0, t + 0.04);
+    osc.connect(gain);
+    gain.connect(OUT());
+    osc.start(t);
+    osc.stop(t + 0.05);
+  } catch(e){}
+}
+
+// Tüm butonlara otomatik tıklama sesi bağlama
+document.addEventListener('click', (e) => {
+  if (e.target.tagName === 'BUTTON' || e.target.closest('button') || e.target.classList.contains('btn')) {
+    playClickSound();
+  }
+});
+
+// --- 3. DAKTİLO / TYPING EFEKTİ ---
+function typeWriter(element, text, speed = 15) {
+  element.textContent = "";
+  let i = 0;
+  function type() {
+    if (i < text.length) {
+      element.textContent += text.charAt(i);
+      i++;
+      setTimeout(type, speed);
+    }
+  }
+  type();
+}
+</script>
+</body>
+</html>
